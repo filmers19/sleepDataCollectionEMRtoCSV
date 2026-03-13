@@ -22,6 +22,22 @@ import numpy as np
 from PIL import Image, ImageOps
 
 logger = logging.getLogger("ocr_only_local_qwen")
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+
+
+def resolve_script_path(path_str: str) -> Path:
+    path = Path(path_str)
+    if path.is_absolute():
+        return path.resolve()
+    return (SCRIPT_DIR / path).resolve()
+
+
+def resolve_repo_path(path_str: str) -> Path:
+    path = Path(path_str)
+    if path.is_absolute():
+        return path.resolve()
+    return (REPO_ROOT / path).resolve()
 
 
 def load_module(module_path: Path, module_name: str) -> Any:
@@ -597,11 +613,11 @@ async def run(args: argparse.Namespace) -> None:
     configure_logging(output_dir=output_dir, debug=args.debug)
     prepared_image_dir = (output_dir / "prepared_images") if args.auto_rotate_landscape else None
 
-    pipeline_mod = load_module(Path(args.pipeline_script).resolve(), "paper_to_cdm_sa_ocr_only")
+    pipeline_mod = load_module(resolve_script_path(args.pipeline_script), "paper_to_cdm_sa_ocr_only")
     if callable(getattr(pipeline_mod, "load_env", None)):
         pipeline_mod.load_env()
 
-    input_root = Path(args.input_root).resolve()
+    input_root = resolve_repo_path(args.input_root)
     patient_dir = input_root / args.patient_name
     if not patient_dir.exists() or not patient_dir.is_dir():
         raise FileNotFoundError(f"Patient folder not found: {patient_dir}")
@@ -683,10 +699,10 @@ async def run(args: argparse.Namespace) -> None:
             top_p=args.top_p,
             max_inflight=args.max_inflight,
             trust_remote_code=(not args.disable_trust_remote_code),
-            package_root=Path(args.deepseek_package_root).resolve(),
+            package_root=resolve_repo_path(args.deepseek_package_root),
         )
     else:
-        local_vlm_mod = load_module(Path(args.local_vlm_script).resolve(), "local_qwen_ocr_only")
+        local_vlm_mod = load_module(resolve_script_path(args.local_vlm_script), "local_qwen_ocr_only")
         backend = local_vlm_mod.LocalQwenVLM(
             model_id=args.model_id,
             dtype=args.dtype,

@@ -16,6 +16,22 @@ from urllib import request as urlrequest
 import pandas as pd
 
 logger = logging.getLogger("ocr_map_openai")
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+
+
+def resolve_script_path(path_str: str) -> Path:
+    path = Path(path_str)
+    if path.is_absolute():
+        return path.resolve()
+    return (SCRIPT_DIR / path).resolve()
+
+
+def resolve_repo_path(path_str: str) -> Path:
+    path = Path(path_str)
+    if path.is_absolute():
+        return path.resolve()
+    return (REPO_ROOT / path).resolve()
 
 
 def load_module(module_path: Path, module_name: str) -> Any:
@@ -521,19 +537,19 @@ async def run(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir).resolve()
     configure_logging(output_dir=output_dir, debug=args.debug)
 
-    pipeline_mod = load_module(Path(args.pipeline_script).resolve(), "paper_to_cdm_sa_ocr_map")
-    ocr_mod = load_module(Path(args.ocr_script).resolve(), "ocr_only_openai_map")
+    pipeline_mod = load_module(resolve_script_path(args.pipeline_script), "paper_to_cdm_sa_ocr_map")
+    ocr_mod = load_module(resolve_script_path(args.ocr_script), "ocr_only_openai_map")
     if callable(getattr(pipeline_mod, "load_env", None)):
         pipeline_mod.load_env()
 
-    input_root = Path(args.input_root).resolve()
+    input_root = resolve_repo_path(args.input_root)
     patient_dir = input_root / args.patient_name
     if not patient_dir.exists() or not patient_dir.is_dir():
         raise FileNotFoundError(f"Patient folder not found: {patient_dir}")
 
-    cdm_csv = Path(args.cdm_csv).resolve()
-    example_csv = Path(args.example_csv).resolve()
-    reuse_ocr_dir = Path(args.reuse_ocr_dir).resolve() if args.reuse_ocr_dir else None
+    cdm_csv = resolve_repo_path(args.cdm_csv)
+    example_csv = resolve_repo_path(args.example_csv)
+    reuse_ocr_dir = resolve_repo_path(args.reuse_ocr_dir) if args.reuse_ocr_dir else None
     if not cdm_csv.exists():
         raise FileNotFoundError(f"CDM CSV not found: {cdm_csv}")
     if not example_csv.exists():

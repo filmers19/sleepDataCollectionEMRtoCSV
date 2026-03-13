@@ -11,6 +11,23 @@ from typing import Any
 
 import pandas as pd
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+
+
+def resolve_script_path(path_str: str) -> Path:
+    path = Path(path_str)
+    if path.is_absolute():
+        return path.resolve()
+    return (SCRIPT_DIR / path).resolve()
+
+
+def resolve_repo_path(path_str: str) -> Path:
+    path = Path(path_str)
+    if path.is_absolute():
+        return path.resolve()
+    return (REPO_ROOT / path).resolve()
+
 
 def load_pipeline_module(module_path: Path) -> Any:
     spec = importlib.util.spec_from_file_location("paper_to_cdm_sa", str(module_path))
@@ -24,7 +41,7 @@ def load_pipeline_module(module_path: Path) -> Any:
 
 
 async def run_one(args: argparse.Namespace) -> None:
-    module_path = Path(args.pipeline_script).resolve()
+    module_path = resolve_script_path(args.pipeline_script)
     mod = load_pipeline_module(module_path)
 
     mod.load_env()
@@ -35,9 +52,9 @@ async def run_one(args: argparse.Namespace) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     mod.configure_logging(output_dir=output_dir, debug=args.debug, log_filename=args.log_filename)
 
-    image_path = Path(args.image_path).resolve()
-    cdm_csv = Path(args.cdm_csv).resolve()
-    example_csv = Path(args.example_csv).resolve()
+    image_path = resolve_repo_path(args.image_path)
+    cdm_csv = resolve_repo_path(args.cdm_csv)
+    example_csv = resolve_repo_path(args.example_csv)
 
     if not image_path.exists():
         raise FileNotFoundError(f"Image not found: {image_path}")

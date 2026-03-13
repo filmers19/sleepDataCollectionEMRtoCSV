@@ -17,6 +17,23 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from uuid import uuid4
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+
+
+def resolve_script_path(path_str: str) -> Path:
+    path = Path(path_str)
+    if path.is_absolute():
+        return path.resolve()
+    return (SCRIPT_DIR / path).resolve()
+
+
+def resolve_repo_path(path_str: str) -> Path:
+    path = Path(path_str)
+    if path.is_absolute():
+        return path.resolve()
+    return (REPO_ROOT / path).resolve()
+
 
 def load_pipeline_module(module_path: Path) -> Any:
     spec = importlib.util.spec_from_file_location("paper_to_cdm_sa", str(module_path))
@@ -563,7 +580,7 @@ def build_quota_aware_ainvoke(
 
 
 async def run(args: argparse.Namespace) -> None:
-    module_path = Path(args.pipeline_script).resolve()
+    module_path = resolve_script_path(args.pipeline_script)
     mod = load_pipeline_module(module_path)
 
     mod.load_env()
@@ -573,9 +590,9 @@ async def run(args: argparse.Namespace) -> None:
     limits, limit_source = resolve_limits_for_model(model, args)
     configure_third_party_logging(quiet=(not args.no_quiet_sdk_logs))
 
-    input_root = Path(args.input_root).resolve()
-    cdm_csv = Path(args.cdm_csv).resolve()
-    example_csv = Path(args.example_csv).resolve()
+    input_root = resolve_repo_path(args.input_root)
+    cdm_csv = resolve_repo_path(args.cdm_csv)
+    example_csv = resolve_repo_path(args.example_csv)
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 

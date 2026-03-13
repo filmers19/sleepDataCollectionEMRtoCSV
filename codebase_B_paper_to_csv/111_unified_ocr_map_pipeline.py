@@ -20,6 +20,22 @@ from urllib import request as urlrequest
 import pandas as pd
 
 logger = logging.getLogger("unified_ocr_map")
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+
+
+def resolve_script_path(path_str: str) -> Path:
+    path = Path(path_str)
+    if path.is_absolute():
+        return path.resolve()
+    return (SCRIPT_DIR / path).resolve()
+
+
+def resolve_repo_path(path_str: str) -> Path:
+    path = Path(path_str)
+    if path.is_absolute():
+        return path.resolve()
+    return (REPO_ROOT / path).resolve()
 
 
 def load_module(module_path: Path, module_name: str) -> Any:
@@ -1060,9 +1076,9 @@ def build_ocr_backend(args: argparse.Namespace, ocr_mod: Any) -> Any:
             top_p=args.ocr_top_p,
             max_inflight=args.ocr_concurrency,
             trust_remote_code=(not args.disable_trust_remote_code),
-            package_root=Path(args.deepseek_package_root).resolve(),
+            package_root=resolve_repo_path(args.deepseek_package_root),
         )
-    local_vlm_mod = load_module(Path(args.local_vlm_script).resolve(), "local_qwen_vlm_unified")
+    local_vlm_mod = load_module(resolve_script_path(args.local_vlm_script), "local_qwen_vlm_unified")
     return local_vlm_mod.LocalQwenVLM(
         model_id=args.ocr_model_id,
         dtype=args.dtype,
@@ -1084,7 +1100,7 @@ def parse_image_names(args: argparse.Namespace) -> List[str]:
     if raw:
         names.extend([part.strip() for part in raw.split(",") if part.strip()])
     if args.image_names_file:
-        for line in Path(args.image_names_file).read_text(encoding="utf-8").splitlines():
+        for line in resolve_repo_path(args.image_names_file).read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if line:
                 names.append(line)
@@ -1100,13 +1116,13 @@ def parse_image_names(args: argparse.Namespace) -> List[str]:
 def resolve_input_images(args: argparse.Namespace, pipeline_mod: Any) -> Tuple[str, List[Path], List[Dict[str, Any]], Optional[Path]]:
     single_image = str(args.single_image or "").strip()
     if single_image:
-        img = Path(single_image).resolve()
+        img = resolve_repo_path(single_image)
         if not img.exists():
             raise FileNotFoundError(f"Single image not found: {img}")
         patient_name = str(args.patient_name or img.stem).strip() or img.stem
         return patient_name, [img], [], img.parent
 
-    input_root = Path(args.input_root).resolve()
+    input_root = resolve_repo_path(args.input_root)
     patient_dir = input_root / args.patient_name
     if not patient_dir.exists() or not patient_dir.is_dir():
         raise FileNotFoundError(f"Patient folder not found: {patient_dir}")
@@ -1275,15 +1291,15 @@ async def run(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir).resolve()
     configure_logging(output_dir=output_dir, debug=args.debug)
 
-    pipeline_mod = load_module(Path(args.pipeline_script).resolve(), "paper_to_cdm_sa_unified")
-    ocr_mod = load_module(Path(args.ocr_script).resolve(), "ocr_only_unified")
+    pipeline_mod = load_module(resolve_script_path(args.pipeline_script), "paper_to_cdm_sa_unified")
+    ocr_mod = load_module(resolve_script_path(args.ocr_script), "ocr_only_unified")
     if callable(getattr(pipeline_mod, "load_env", None)):
         pipeline_mod.load_env()
 
     patient_name, images, duplicates, patient_dir = resolve_input_images(args, pipeline_mod)
-    cdm_csv = Path(args.cdm_csv).resolve()
-    example_csv = Path(args.example_csv).resolve()
-    reuse_ocr_dir = Path(args.reuse_ocr_dir).resolve() if args.reuse_ocr_dir else None
+    cdm_csv = resolve_repo_path(args.cdm_csv)
+    example_csv = resolve_repo_path(args.example_csv)
+    reuse_ocr_dir = resolve_repo_path(args.reuse_ocr_dir) if args.reuse_ocr_dir else None
     if not cdm_csv.exists():
         raise FileNotFoundError(f"CDM CSV not found: {cdm_csv}")
     if not example_csv.exists():
@@ -1303,7 +1319,7 @@ async def run(args: argparse.Namespace) -> None:
     plan = {
         "patient_name": patient_name,
         "patient_dir": str(patient_dir) if patient_dir is not None else "",
-        "single_image": str(Path(args.single_image).resolve()) if args.single_image else "",
+        "single_image": str(resolve_repo_path(args.single_image)) if args.single_image else "",
         "selected_images": [img.name for img in images],
         "output_dir": str(output_dir),
         "pipeline_mode": args.pipeline_mode,

@@ -1,8 +1,11 @@
 import argparse
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+
+BASE_DIR = Path(__file__).resolve().parent
 
 # ============================================================
 # Rules derived from explanation_psg_summary.csv
@@ -604,8 +607,8 @@ def compute_database_id(psg_date: Any, psg_no: Any, psg_type: Any, prefix: str =
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='Parse PSG_text into structured variables.')
-    parser.add_argument('--input', default='test3.csv', help='Input CSV file path')
-    parser.add_argument('--output', default='result.csv', help='Output CSV file path')
+    parser.add_argument('--input', default=str(BASE_DIR / 'test3.csv'), help='Input CSV file path')
+    parser.add_argument('--output', default=str(BASE_DIR / 'result.csv'), help='Output CSV file path')
 
     args = parser.parse_args()
 

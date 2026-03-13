@@ -35,6 +35,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 # Always load the full CDM. How much of it each map agent sees is controlled
 # by the split-agent count when building agent specs.
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
 
 CORE_ALWAYS_KEYS = [
     "Hospital_ID",
@@ -211,7 +213,7 @@ REQUEST_THROTTLE = GlobalRequestThrottle()
 
 
 def load_env() -> None:
-    dotenv_path = Path(__file__).resolve().parent / ".env"
+    dotenv_path = REPO_ROOT / ".env"
     if dotenv_path.exists():
         load_dotenv(dotenv_path=dotenv_path, override=False)
     else:

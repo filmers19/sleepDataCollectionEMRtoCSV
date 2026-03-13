@@ -20,6 +20,22 @@ import pandas as pd
 from PIL import Image
 
 logger = logging.getLogger("local_qwen_vlm")
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+
+
+def resolve_script_path(path_str: str) -> Path:
+    path = Path(path_str)
+    if path.is_absolute():
+        return path.resolve()
+    return (SCRIPT_DIR / path).resolve()
+
+
+def resolve_repo_path(path_str: str) -> Path:
+    path = Path(path_str)
+    if path.is_absolute():
+        return path.resolve()
+    return (REPO_ROOT / path).resolve()
 
 
 def configure_third_party_logging(quiet: bool) -> None:
@@ -668,15 +684,15 @@ async def run_pipeline_incremental_live(
 
 
 async def run(args: argparse.Namespace) -> None:
-    module_path = Path(args.pipeline_script).resolve()
+    module_path = resolve_script_path(args.pipeline_script)
     mod = load_pipeline_module(module_path)
     mod.load_env()
     configure_third_party_logging(quiet=(not args.no_quiet_sdk_logs))
     t_run_wall_start = time.perf_counter()
 
-    input_root = Path(args.input_root).resolve()
-    cdm_csv = Path(args.cdm_csv).resolve()
-    example_csv = Path(args.example_csv).resolve()
+    input_root = resolve_repo_path(args.input_root)
+    cdm_csv = resolve_repo_path(args.cdm_csv)
+    example_csv = resolve_repo_path(args.example_csv)
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 

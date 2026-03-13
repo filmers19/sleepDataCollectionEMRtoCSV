@@ -34,6 +34,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 CDM_LAST_INCLUDED_KEY = "PSG_M_08_Wake"
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
 
 CORE_ALWAYS_KEYS = [
     "Hospital_ID",
@@ -100,7 +102,7 @@ RECALL_HINT_RE = re.compile(
 
 
 def load_env() -> None:
-    dotenv_path = Path(__file__).resolve().parent / ".env"
+    dotenv_path = REPO_ROOT / ".env"
     if dotenv_path.exists():
         load_dotenv(dotenv_path=dotenv_path, override=False)
     else:

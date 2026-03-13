@@ -1,9 +1,12 @@
 import csv
 import math
 import re
+from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 import pandas as pd
+
+BASE_DIR = Path(__file__).resolve().parent
 
 
 # -----------------------------------------------------------------------------
@@ -444,9 +447,9 @@ if __name__ == "__main__":
     if len(sys.argv) >= 2:
         in_path = sys.argv[1]
     else:
-        in_path = input("Enter CSV file path (or press Enter for 'test2.csv'): ").strip() or "test2.csv"
+        in_path = input("Enter CSV file path (or press Enter for 'test2.csv'): ").strip() or str(BASE_DIR / "test2.csv")
 
-    out_path = sys.argv[2] if len(sys.argv) >= 3 else "test3.csv"
+    out_path = sys.argv[2] if len(sys.argv) >= 3 else str(BASE_DIR / "test3.csv")
 
     out_file = process_csv(in_path, out_path)
     print("Processing complete!")

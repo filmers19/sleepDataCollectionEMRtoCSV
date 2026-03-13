@@ -30,6 +30,9 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+
 # -----------------------------
 # Helpers
 # -----------------------------
@@ -37,7 +40,7 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 
 
 def load_env() -> None:
-    dotenv_path = Path(__file__).resolve().parent / ".env"
+    dotenv_path = REPO_ROOT / ".env"
     if dotenv_path.exists():
         load_dotenv(dotenv_path=dotenv_path, override=False)
     else:

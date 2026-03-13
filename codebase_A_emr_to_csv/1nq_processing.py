@@ -1,6 +1,9 @@
 import pandas as pd
 import re
 import numpy as np
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
 
 # --- 1. Schema Definitions ---
 VARS_ANTHRO = ['Height_cm', 'Weight_kg', 'BMI', 'Neckcir_cm', 'Occupation', 'Shiftwork']
@@ -476,8 +479,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Parse NQ_text in a CSV and write parsed variables into columns.")
-    parser.add_argument("-i", "--input", default="test.csv", help="Input CSV path (must contain column 'NQ_text').")
-    parser.add_argument("-o", "--output", default="test2.csv", help="Output CSV path.")
+    parser.add_argument("-i", "--input", default=str(BASE_DIR / "test.csv"), help="Input CSV path (must contain column 'NQ_text').")
+    parser.add_argument("-o", "--output", default=str(BASE_DIR / "test2.csv"), help="Output CSV path.")
     args = parser.parse_args()
 
     df = pd.read_csv(args.input)
