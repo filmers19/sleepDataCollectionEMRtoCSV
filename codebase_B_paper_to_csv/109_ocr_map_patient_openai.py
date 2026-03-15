@@ -228,17 +228,23 @@ def _summarize_json_failure(raw_text: str, exc: Exception) -> str:
     return ",".join(flags)
 
 
+def build_route_schema_hint() -> str:
+    return '{"route":"<route>","confidence":"high|medium|low","reason":"<short reason>"}'
+
+
 async def openai_map_to_json(
     llm: RemoteOpenAIResponsesTextAgent,
     pipeline_mod: Any,
     ocr_text: str,
     candidates_block: str,
+    route_name: str,
     max_attempts: int = 3,
 ) -> Dict[str, Any]:
-    user = pipeline_mod.build_map_user_prompt(ocr_text, candidates_block)
+    user = pipeline_mod.build_map_user_prompt(ocr_text, candidates_block, route_name=route_name)
     schema_hint = (
-        '{"CDM_KEY": {"value": <scalar>, '
-        '"input_context": {"filled_by": "doctor|patient|unknown", "question": "<text>", "page": "<summary>"}}}'
+        '{"CDM_KEY": {"CDM_Context": "<cdm context>", "value": <value>, '
+        '"input_context": {"filled_by": "doctor|patient", '
+        '"question": "<exact question/context that matches to the CDM key>"}}}'
     )
     last_error: Exception | None = None
     last_raw = ""
@@ -333,35 +339,67 @@ async def openai_text_to_json(
     ) from last_error
 
 
+async def route_ocr_text(
+    llm: RemoteOpenAIResponsesTextAgent,
+    pipeline_mod: Any,
+    ocr_text: str,
+    max_attempts: int,
+) -> Dict[str, Any]:
+    try:
+        raw = await openai_text_to_json(
+            llm=llm,
+            system_prompt=pipeline_mod.MAP_ROUTE_SYSTEM,
+            user_text=pipeline_mod.build_route_user_prompt(ocr_text),
+            pipeline_mod=pipeline_mod,
+            schema_hint=build_route_schema_hint(),
+            max_attempts=max_attempts,
+        )
+        return pipeline_mod.normalize_route_decision(raw, ocr_text)
+    except Exception as exc:
+        fallback = pipeline_mod.classify_map_route_heuristic(ocr_text)
+        fallback["reason"] = f"heuristic_fallback_after_route_error:{type(exc).__name__}"
+        logger.warning("Route classifier failed, falling back to heuristic router: %s", exc)
+        return fallback
+
+
 async def map_ocr_text_single_agent(
     llm: RemoteOpenAIResponsesTextAgent,
     pipeline_mod: Any,
     retriever: Any,
     ocr_text: str,
+    route_name: str,
     json_retry_attempts: int,
-) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, str]], Dict[str, Dict[str, Any]]]:
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, str]], Dict[str, str], Dict[str, Dict[str, Any]]]:
     stage_raw: Dict[str, Any] = {}
     stage_valid: Dict[str, Any] = {}
     stage_contexts: Dict[str, Dict[str, str]] = {}
+    stage_cdm_contexts: Dict[str, str] = {}
     stage_rejected: Dict[str, Dict[str, Any]] = {}
+    route_name = str(route_name or pipeline_mod.DEFAULT_MAP_ROUTE)
+    candidates_block = retriever.prompt_block_for_route(route_name)
+    ocr_chunks = pipeline_mod.split_ocr_text_for_map_route(ocr_text, route_name)
 
-    raw = await openai_map_to_json(
-        llm=llm,
-        pipeline_mod=pipeline_mod,
-        ocr_text=ocr_text,
-        candidates_block=retriever.full_cdm_prompt_block(),
-        max_attempts=json_retry_attempts,
-    )
-    pipeline_mod.merge_map_payload_into_stage(
-        retriever=retriever,
-        ocr_text=ocr_text,
-        raw_payload=raw,
-        stage_raw=stage_raw,
-        stage_valid=stage_valid,
-        stage_contexts=stage_contexts,
-        stage_rejected=stage_rejected,
-    )
-    return stage_raw, stage_valid, stage_contexts, stage_rejected
+    for ocr_chunk in ocr_chunks:
+        raw = await openai_map_to_json(
+            llm=llm,
+            pipeline_mod=pipeline_mod,
+            ocr_text=ocr_chunk,
+            candidates_block=candidates_block,
+            route_name=route_name,
+            max_attempts=json_retry_attempts,
+        )
+        pipeline_mod.merge_map_payload_into_stage(
+            retriever=retriever,
+            ocr_text=ocr_chunk,
+            raw_payload=raw,
+            route_name=route_name,
+            stage_raw=stage_raw,
+            stage_valid=stage_valid,
+            stage_contexts=stage_contexts,
+            stage_cdm_contexts=stage_cdm_contexts,
+            stage_rejected=stage_rejected,
+        )
+    return stage_raw, stage_valid, stage_contexts, stage_cdm_contexts, stage_rejected
 
 
 async def map_ocr_text_multi_agent(
@@ -370,8 +408,9 @@ async def map_ocr_text_multi_agent(
     retriever: Any,
     ocr_text: str,
     map_agent_count: int,
+    route_name: str,
     json_retry_attempts: int,
-) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, str]], Dict[str, Dict[str, Any]]]:
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, str]], Dict[str, str], Dict[str, Dict[str, Any]]]:
     n_agents = max(1, int(map_agent_count))
     if n_agents <= 1:
         return await map_ocr_text_single_agent(
@@ -379,41 +418,51 @@ async def map_ocr_text_multi_agent(
             pipeline_mod=pipeline_mod,
             retriever=retriever,
             ocr_text=ocr_text,
+            route_name=route_name,
             json_retry_attempts=json_retry_attempts,
         )
 
     stage_raw: Dict[str, Any] = {}
     stage_valid: Dict[str, Any] = {}
     stage_contexts: Dict[str, Dict[str, str]] = {}
+    stage_cdm_contexts: Dict[str, str] = {}
     stage_rejected: Dict[str, Dict[str, Any]] = {}
-    map_agents = pipeline_mod.build_map_agent_specs(retriever, n_agents)
+    route_name = str(route_name or pipeline_mod.DEFAULT_MAP_ROUTE)
+    map_agents = pipeline_mod.build_map_agent_specs(retriever, n_agents, route_name=route_name)
+    ocr_chunks = pipeline_mod.split_ocr_text_for_map_route(ocr_text, route_name)
 
-    async def _call(agent: Any) -> Tuple[Any, Dict[str, Any]]:
+    async def _call(agent: Any, ocr_chunk: str) -> Tuple[Any, str, Dict[str, Any]]:
         payload = await openai_map_to_json(
             llm=llm,
             pipeline_mod=pipeline_mod,
-            ocr_text=ocr_text,
+            ocr_text=ocr_chunk,
             candidates_block=agent.candidates_block,
+            route_name=agent.route_name,
             max_attempts=json_retry_attempts,
         )
-        return agent, payload
+        return agent, ocr_chunk, payload
 
-    outs = await asyncio.gather(*[_call(agent) for agent in map_agents], return_exceptions=True)
+    outs = await asyncio.gather(
+        *[_call(agent, ocr_chunk) for ocr_chunk in ocr_chunks for agent in map_agents],
+        return_exceptions=True,
+    )
     for out in outs:
         if isinstance(out, Exception):
             logger.warning("Split map agent call failed: %s", out)
             continue
-        _, payload = out
+        _, ocr_chunk, payload = out
         pipeline_mod.merge_map_payload_into_stage(
             retriever=retriever,
-            ocr_text=ocr_text,
+            ocr_text=ocr_chunk,
             raw_payload=payload,
+            route_name=route_name,
             stage_raw=stage_raw,
             stage_valid=stage_valid,
             stage_contexts=stage_contexts,
+            stage_cdm_contexts=stage_cdm_contexts,
             stage_rejected=stage_rejected,
         )
-    return stage_raw, stage_valid, stage_contexts, stage_rejected
+    return stage_raw, stage_valid, stage_contexts, stage_cdm_contexts, stage_rejected
 
 
 async def resolve_single_conflict_with_openai(
@@ -726,12 +775,19 @@ async def run(args: argparse.Namespace) -> None:
 
             t0 = time.perf_counter()
             try:
-                raw_obj, valid_obj, valid_contexts, rejected_fields = await map_ocr_text_multi_agent(
+                route_info = await route_ocr_text(
+                    llm=map_backend,
+                    pipeline_mod=pipeline_mod,
+                    ocr_text=merged_text,
+                    max_attempts=max(1, min(2, int(args.map_json_retry_attempts))),
+                )
+                raw_obj, valid_obj, valid_contexts, valid_cdm_contexts, rejected_fields = await map_ocr_text_multi_agent(
                     llm=map_backend,
                     pipeline_mod=pipeline_mod,
                     retriever=retriever,
                     ocr_text=merged_text,
                     map_agent_count=args.map_agent_count,
+                    route_name=str(route_info.get("route") or pipeline_mod.DEFAULT_MAP_ROUTE),
                     json_retry_attempts=args.map_json_retry_attempts,
                 )
                 page_results.append(
@@ -741,6 +797,7 @@ async def run(args: argparse.Namespace) -> None:
                         raw_json=raw_obj,
                         valid_json=valid_obj,
                         input_contexts=valid_contexts,
+                        cdm_contexts=valid_cdm_contexts,
                         rejected_fields=rejected_fields,
                     )
                 )
@@ -753,7 +810,17 @@ async def run(args: argparse.Namespace) -> None:
                     encoding="utf-8",
                 )
                 (map_page_dir / f"{Path(bundle_name).stem}.contexts.json").write_text(
-                    json.dumps(valid_contexts, ensure_ascii=False, indent=2),
+                    json.dumps(
+                        {
+                            k: {
+                                "CDM_Context": valid_cdm_contexts.get(k, ""),
+                                "input_context": valid_contexts.get(k, {}),
+                            }
+                            for k in valid_obj.keys()
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
                     encoding="utf-8",
                 )
                 if rejected_fields:
@@ -765,6 +832,7 @@ async def run(args: argparse.Namespace) -> None:
                 error = ""
                 valid_count = len(valid_obj)
             except Exception as e:
+                route_info = pipeline_mod.classify_map_route_heuristic(merged_text)
                 ok = False
                 error = f"{type(e).__name__}: {e}"
                 valid_count = 0
@@ -773,6 +841,13 @@ async def run(args: argparse.Namespace) -> None:
         meta = {
             "bundle": bundle_name,
             "source_images": image_names,
+            "map_route": route_info.get("route"),
+            "map_route_confidence": route_info.get("confidence"),
+            "map_route_report_score": route_info.get("report_score"),
+            "map_route_extensive_report_score": route_info.get("extensive_report_score"),
+            "map_route_morning_score": route_info.get("morning_score"),
+            "map_route_night_score": route_info.get("night_score"),
+            "map_route_reason": route_info.get("reason"),
             "ok": ok,
             "elapsed_seconds": time.perf_counter() - t0,
             "valid_keys": valid_count,

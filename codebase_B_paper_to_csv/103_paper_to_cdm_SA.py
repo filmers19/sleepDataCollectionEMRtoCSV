@@ -176,6 +176,268 @@ DOCUMENT_LABEL_SPECS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+MAP_ROUTE_PSG_REPORT_GENERAL = "map_route_psg_report_general"
+MAP_ROUTE_PSG_REPORT_EXTENSIVE = "map_route_psg_report_extensive"
+MAP_ROUTE_PSG_REPORT = MAP_ROUTE_PSG_REPORT_GENERAL
+MAP_ROUTE_MORNING_QUESTIONNAIRE = "map_route_morning_questionnaire"
+MAP_ROUTE_NIGHT_QUESTIONNAIRE = "map_route_night_questionnaire"
+DEFAULT_MAP_ROUTE = MAP_ROUTE_NIGHT_QUESTIONNAIRE
+
+MAP_ROUTE_DESCRIPTIONS: Dict[str, str] = {
+    MAP_ROUTE_PSG_REPORT_GENERAL: "General sleep lab polysomnography report page with PSG metrics, signal/channel labels, respiratory tables, clinician interpretation, or diagnosis/impression notes.",
+    MAP_ROUTE_PSG_REPORT_EXTENSIVE: "Extensive polysomnography report page with the same PSG-report characteristics plus a RESPIRATORY DISTURBANCE INDEX section or similarly dense respiratory/position/stage tables. This route should use two map passes over split OCR text.",
+    MAP_ROUTE_MORNING_QUESTIONNAIRE: "Morning-after PSG questionnaire page asking about last night's sleep, awakenings, dreams, alertness, and waking experience.",
+    MAP_ROUTE_NIGHT_QUESTIONNAIRE: "Patient-filled night questionnaire or sleep-history page, including official sleep scales and general symptom/history questionnaires.",
+}
+
+MORNING_QUESTIONNAIRE_ROUTE_LABELS: Tuple[str, ...] = (
+    "psg_morning",
+)
+
+NIGHT_QUESTIONNAIRE_ROUTE_LABELS: Tuple[str, ...] = (
+    "psqi",
+    "ess",
+    "fss",
+    "bq",
+    "isi",
+    "rls_irls",
+    "rbd_rbdsq",
+    "mood",
+    "qol",
+    "sleep_history",
+)
+
+PSG_REPORT_HINT_PATTERNS: List[Tuple[re.Pattern, int, str]] = [
+    (re.compile(r"신경과\s*수면검사|수면다원검사|polysomnography(?:\s+(?:data|report))?", re.I), 3, "psg_title"),
+    (re.compile(r"\b(?:tst|ahi|rdi|sleep efficiency|sleep latency|rem latency|lowest\s*sao2|lowest\s*spo2)\b", re.I), 2, "psg_metrics"),
+    (re.compile(r"\b(?:eeg|eog|emg|ecg|ekg|airflow|thorax|abd(?:omen)?|spo2|snor(?:e|ing)?|position|leg|chin)\b", re.I), 2, "psg_channels"),
+    (re.compile(r"\b(?:c3-a2|c4-a1|o1-a2|o2-a1|f3-m2|f4-m1)\b", re.I), 2, "psg_leads"),
+    (re.compile(r"diagnosis|impression|interpretation|clinical\s+correlation|technologist|physician", re.I), 2, "psg_clinician_note"),
+    (re.compile(r"respiratory event|apnea|hypopnea|arousal index|stage n1|stage n2|stage n3|rem/tst", re.I), 2, "psg_event_table"),
+]
+
+PSG_REPORT_EXTENSIVE_HINT_PATTERNS: List[Tuple[re.Pattern, int, str]] = [
+    (re.compile(r"night polysomnography report", re.I), 3, "night_polysomnography_report"),
+]
+
+MORNING_QUESTIONNAIRE_HINT_PATTERNS: List[Tuple[re.Pattern, int, str]] = [
+    (re.compile(r"어젯밤|오늘\s*아침|보통\s*집에서|잠에서\s*깨어|얼마나\s*오랫동안\s*잠을", re.I), 2, "morning_questionnaire_text"),
+    (re.compile(r"수면제|꿈을\s*기억|잠자는\s*동안\s*몇\s*번\s*깨|어떻게\s*잠에서\s*깨어", re.I), 2, "morning_questionnaire_items"),
+    (re.compile(r"어젯밤\s*당신의\s*수면에\s*대한\s*평가|오늘\s*아침\s*신체적으로\s*불편", re.I), 3, "morning_questionnaire_title"),
+]
+
+NIGHT_QUESTIONNAIRE_HINT_PATTERNS: List[Tuple[re.Pattern, int, str]] = [
+    (re.compile(r"questionnaire|설문지|문진표|자가기입|자가\s*보고|지난\s*한\s*달간", re.I), 2, "questionnaire_title"),
+    (re.compile(r"\b(?:psqi|epworth|ess|fss|bq|berlin questionnaire|isi|rbdsq|phq|whoqol)\b", re.I), 2, "questionnaire_scale_name"),
+    (re.compile(r"\[\s*selected\s*\]|◯|○|☑|✓|체크|예\s*/\s*아니오|예\s+\[selected\]|아니오\s+\[selected\]", re.I), 2, "questionnaire_marks"),
+    (re.compile(r"(?:^|\n)\s*\d{1,2}\.\s", re.I), 1, "questionnaire_numbered_items"),
+    (re.compile(r"환자|본인|주중|주말|잠이|졸립|피곤|깼|수면", re.I), 1, "questionnaire_language"),
+]
+
+
+def normalize_map_route_name(route_raw: Any) -> str:
+    raw = str(route_raw or "").strip().lower()
+    aliases = {
+        "psg_report_general": MAP_ROUTE_PSG_REPORT_GENERAL,
+        "general_polysomnography_report": MAP_ROUTE_PSG_REPORT_GENERAL,
+        "map_route_psg_report_general": MAP_ROUTE_PSG_REPORT_GENERAL,
+        "psg_report_extensive": MAP_ROUTE_PSG_REPORT_EXTENSIVE,
+        "extensive_polysomnography_report": MAP_ROUTE_PSG_REPORT_EXTENSIVE,
+        "map_route_psg_report_extensive": MAP_ROUTE_PSG_REPORT_EXTENSIVE,
+        "psg_report": MAP_ROUTE_PSG_REPORT,
+        "polysomnography_report": MAP_ROUTE_PSG_REPORT,
+        "map_route_psg_report": MAP_ROUTE_PSG_REPORT,
+        "morning_questionnaire": MAP_ROUTE_MORNING_QUESTIONNAIRE,
+        "psg_morning": MAP_ROUTE_MORNING_QUESTIONNAIRE,
+        "map_route_morning_questionnaire": MAP_ROUTE_MORNING_QUESTIONNAIRE,
+        "night_questionnaire": MAP_ROUTE_NIGHT_QUESTIONNAIRE,
+        "patient_questionnaire": MAP_ROUTE_NIGHT_QUESTIONNAIRE,
+        "questionnaire": MAP_ROUTE_NIGHT_QUESTIONNAIRE,
+        "map_route_night_questionnaire": MAP_ROUTE_NIGHT_QUESTIONNAIRE,
+    }
+    return aliases.get(raw, DEFAULT_MAP_ROUTE)
+
+
+def prepare_ocr_text_for_router(ocr_text: str) -> str:
+    text = str(ocr_text or "")
+    if not text:
+        return ""
+    if re.search(r"night polysomnography report", text, flags=re.I):
+        stripped = text.lstrip()
+        prefix = "NIGHT POLYSOMNOGRAPHY REPORT"
+        if not stripped.startswith(prefix):
+            return f"{prefix}\n{text}"
+    return text
+
+
+def classify_map_route_heuristic(ocr_text: str) -> Dict[str, Any]:
+    text = prepare_ocr_text_for_router(ocr_text)
+    report_score = 0
+    extensive_report_score = 0
+    morning_score = 0
+    night_score = 0
+    report_hits: List[str] = []
+    extensive_report_hits: List[str] = []
+    morning_hits: List[str] = []
+    night_hits: List[str] = []
+
+    for pattern, weight, label in PSG_REPORT_HINT_PATTERNS:
+        if pattern.search(text):
+            report_score += weight
+            report_hits.append(label)
+
+    for pattern, weight, label in PSG_REPORT_EXTENSIVE_HINT_PATTERNS:
+        if pattern.search(text):
+            extensive_report_score += weight
+            extensive_report_hits.append(label)
+
+    for pattern, weight, label in MORNING_QUESTIONNAIRE_HINT_PATTERNS:
+        if pattern.search(text):
+            morning_score += weight
+            morning_hits.append(label)
+
+    for pattern, weight, label in NIGHT_QUESTIONNAIRE_HINT_PATTERNS:
+        if pattern.search(text):
+            night_score += weight
+            night_hits.append(label)
+
+    scores = {
+        MAP_ROUTE_PSG_REPORT_GENERAL: report_score,
+        MAP_ROUTE_MORNING_QUESTIONNAIRE: morning_score,
+        MAP_ROUTE_NIGHT_QUESTIONNAIRE: night_score,
+    }
+    best_route = max(scores.items(), key=lambda kv: kv[1])[0]
+    best_score = scores[best_route]
+    runner_up = sorted(scores.values(), reverse=True)[1] if len(scores) > 1 else 0
+
+    has_extensive_signature = "night_polysomnography_report" in set(extensive_report_hits)
+
+    if report_score >= max(3, runner_up + 2):
+        if has_extensive_signature:
+            route = MAP_ROUTE_PSG_REPORT_EXTENSIVE
+        else:
+            route = MAP_ROUTE_PSG_REPORT_GENERAL
+    elif best_route == MAP_ROUTE_MORNING_QUESTIONNAIRE and best_score >= max(3, runner_up + 2):
+        route = MAP_ROUTE_MORNING_QUESTIONNAIRE
+    else:
+        route = best_route
+
+    diff = best_score - runner_up
+    if diff >= 4:
+        confidence = "high"
+    elif diff >= 2:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    return {
+        "route": route,
+        "confidence": confidence,
+        "report_score": report_score,
+        "extensive_report_score": extensive_report_score,
+        "morning_score": morning_score,
+        "night_score": night_score,
+        "report_hits": report_hits,
+        "extensive_report_hits": extensive_report_hits,
+        "morning_hits": morning_hits,
+        "night_hits": night_hits,
+        "reason": "heuristic_router",
+    }
+
+
+def classify_map_route(ocr_text: str) -> Dict[str, Any]:
+    return classify_map_route_heuristic(ocr_text)
+
+
+def normalize_route_decision(decision: Dict[str, Any], ocr_text: str) -> Dict[str, Any]:
+    fallback = classify_map_route_heuristic(ocr_text)
+    if not isinstance(decision, dict):
+        return fallback
+    route = normalize_map_route_name(decision.get("route"))
+    confidence_raw = str(decision.get("confidence", "")).strip().lower()
+    confidence = confidence_raw if confidence_raw in {"high", "medium", "low"} else fallback["confidence"]
+    reason = str(decision.get("reason", "")).strip()
+    if not reason:
+        reason = "llm_router"
+    out = dict(fallback)
+    out["route"] = route
+    out["confidence"] = confidence
+    out["reason"] = reason
+    return out
+
+
+MAP_ROUTE_SYSTEM = """
+# Role: You are a routing classifier for OCR pages from a sleep clinic.
+# Task: Choose exactly one of 4 possible map route types depending on the content of the page.
+1) map_route_psg_report_general
+- has keywords as 
+    - '신경과 수면검사', '수면다원검사', 'polysomnography data', or 'polysomnography report'. OR
+    - PSG metrics OR
+    - signal graphs with polysomnography channel names OR
+    - diagnostic notes from sleep clinicians and technologists.
+- choose map_route_psg_report_general for doctor/staff-authored reports even if the page does not contain PSG metric tables.
+2) map_route_psg_report_extensive
+- satisfies conditions as map_route_psg_report_general AND
+- contains the keyword 'NIGHT POLYSOMNOGRAPHY REPORT'.
+3) map_route_morning_questionnaire
+- is not a psg report.
+- has a title named '아침 질문' or 'morning questionnaires'.
+- Caution) just because it has questions related to morning time, it's not a morning questionnaire.
+4) map_route_night_questionnaire
+- All patient questionnaires that do not fit in psg report and morning questionnaire categories.
+e.g., PSQI, ESS, SSS, FSS, BQ, ISI, RLS, IRLS, RBDSQ, PHQ, BDI, QOL, habits/history, symptom checklists, and all other questions.
+- it's always patient-filled questionnaire. Do not choose night questionnaire when the page is clearly a doctor/staff-authored report.
+
+Output JSON only:
+{
+  "route": "<one route name>",
+  "confidence": "high|medium|low",
+  "reason": "<short reason>"
+}
+"""
+
+
+def build_route_user_prompt(ocr_text: str) -> str:
+    lines = [f"- {key}: {value}" for key, value in MAP_ROUTE_DESCRIPTIONS.items()]
+    route_catalog = "\n".join(lines)
+    route_text = prepare_ocr_text_for_router(ocr_text)
+    return f"""OCR TEXT:
+\"\"\"{route_text[:10000]}\"\"\"
+
+AVAILABLE ROUTES:
+{route_catalog}
+
+Choose the single best route for this OCR text.
+Return ONE JSON object only.
+"""
+
+
+def split_ocr_text_for_map_route(ocr_text: str, route_name: str) -> List[str]:
+    route = normalize_map_route_name(route_name)
+    text = str(ocr_text or "").strip()
+    if not text:
+        return [""]
+    if route != MAP_ROUTE_PSG_REPORT_EXTENSIVE:
+        return [text]
+
+    lines = text.splitlines()
+    if len(lines) < 20:
+        return [text]
+
+    header_keep = min(12, max(4, len(lines) // 6))
+    shared_header = lines[:header_keep]
+    body = lines[header_keep:]
+    if len(body) < 10:
+        return [text]
+
+    mid = len(body) // 2
+    chunks: List[str] = []
+    for body_part in (body[:mid], body[mid:]):
+        part = "\n".join(shared_header + body_part).strip()
+        if part:
+            chunks.append(part)
+    return chunks or [text]
+
 
 def build_document_label_catalog_text() -> str:
     lines: List[str] = []
@@ -374,16 +636,41 @@ def _is_missing_value(v: Any) -> bool:
 def _normalize_filled_by(v: Any) -> str:
     s = str(v or "").strip().lower()
     if not s:
-        return "unknown"
+        return ""
     if any(t in s for t in ["doctor", "physician", "md", "의사", "전문의", "clinician", "lab"]):
         return "doctor"
     if any(t in s for t in ["patient", "self", "subject", "respondent", "환자", "본인", "보호자"]):
         return "patient"
-    return "unknown"
+    return ""
 
 
 def _default_input_context() -> Dict[str, str]:
-    return {"filled_by": "unknown", "question": "", "page": ""}
+    return {"filled_by": "", "question": "", "page_type": ""}
+
+
+def _extract_page_type_from_text(text_like: Any) -> str:
+    text = str(text_like or "").strip()
+    m = re.match(r"\[page_type:\s*([^\]]+)\]\s*", text)
+    if not m:
+        return ""
+    return normalize_map_route_name(m.group(1))
+
+
+def _extract_page_type_from_context(ctx: Any) -> str:
+    if isinstance(ctx, dict):
+        raw_direct = str(ctx.get("page_type") or "").strip()
+        direct = normalize_map_route_name(raw_direct) if raw_direct else ""
+        if direct:
+            return direct
+        for legacy_key in ("relevance", "page", "page_summary", "source_page", "page_context", "summary"):
+            legacy = _extract_page_type_from_text(ctx.get(legacy_key))
+            if legacy:
+                return legacy
+    elif isinstance(ctx, str):
+        legacy = _extract_page_type_from_text(ctx)
+        if legacy:
+            return legacy
+    return ""
 
 
 def _normalize_input_context(ctx: Any) -> Dict[str, str]:
@@ -407,32 +694,27 @@ def _normalize_input_context(ctx: Any) -> Dict[str, str]:
         or ctx.get("prompt")
         or ctx.get("text")
     )
-    page_raw = (
-        ctx.get("page")
-        or ctx.get("page_summary")
-        or ctx.get("source_page")
-        or ctx.get("page_context")
-        or ctx.get("summary")
-    )
     out["filled_by"] = _normalize_filled_by(filled_by_raw)
     out["question"] = str(question_raw or "").strip()
-    out["page"] = str(page_raw or "").strip()
+    out["page_type"] = _extract_page_type_from_context(ctx)
     return out
 
 
-def parse_value_context_map(obj: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Dict[str, str]]]:
+def parse_value_context_map(obj: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Dict[str, str]], Dict[str, str]]:
     """
     Normalize model output into:
-      - values: key -> scalar value candidate
-      - contexts: key -> {filled_by, question, page}
+      - values: key -> mapped value candidate
+      - contexts: key -> {filled_by, question, page_type}
+      - cdm_contexts: key -> string explaining what the CDM key is about
 
     Accepts both old format:
       {"KEY": 1}
     and new format:
-      {"KEY": {"value": 1, "input_context": {...}}}
+      {"KEY": {"CDM_Context": "...", "value": 1, "input_context": {...}}}
     """
     values: Dict[str, Any] = {}
     contexts: Dict[str, Dict[str, str]] = {}
+    cdm_contexts: Dict[str, str] = {}
     for raw_k, raw_v in obj.items():
         key = str(raw_k).strip()
         if not key:
@@ -441,6 +723,12 @@ def parse_value_context_map(obj: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[s
         if isinstance(raw_v, dict) and "value" in raw_v:
             values[key] = raw_v.get("value")
             contexts[key] = _normalize_input_context(raw_v.get("input_context"))
+            cdm_contexts[key] = str(
+                raw_v.get("CDM_Context")
+                or raw_v.get("cdm_context")
+                or raw_v.get("CDM_context")
+                or ""
+            ).strip()
             # Allow flattened context fields.
             if contexts[key] == _default_input_context():
                 contexts[key] = _normalize_input_context(raw_v)
@@ -448,7 +736,8 @@ def parse_value_context_map(obj: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[s
 
         values[key] = raw_v
         contexts[key] = _default_input_context()
-    return values, contexts
+        cdm_contexts[key] = ""
+    return values, contexts, cdm_contexts
 
 
 def _coerce_int(v: Any) -> Optional[int]:
@@ -484,7 +773,7 @@ def _norm_cmp(v: Any) -> str:
 
 
 def _value_token(v: Any) -> str:
-    return json.dumps(v, ensure_ascii=False, sort_keys=True)
+    return json.dumps(normalize_value(v), ensure_ascii=False, sort_keys=True)
 
 
 def _normalize_text_token(s: str) -> str:
@@ -1163,6 +1452,7 @@ def merge_page_results(
                 {
                     "image": pr.image_name,
                     "value": v,
+                    "cdm_context": str(pr.cdm_contexts.get(k, "")).strip(),
                     "input_context": _normalize_input_context(pr.input_contexts.get(k)),
                 }
             )
@@ -1174,30 +1464,29 @@ def merge_page_results(
     for k, entries in by_key.items():
         provenance[k] = entries
 
-        unique_entries: List[Dict[str, Any]] = []
-        seen_tokens = set()
+        conflict_entries: List[Dict[str, Any]] = []
         for e in entries:
-            tk = _value_token(e["value"])
-            if tk in seen_tokens:
-                continue
-            seen_tokens.add(tk)
-            unique_entries.append(
+            conflict_entries.append(
                 {
                     "image": e.get("image"),
                     "value": e.get("value"),
+                    "cdm_context": str(e.get("cdm_context", "")).strip(),
                     "input_context": _normalize_input_context(e.get("input_context")),
                 }
             )
+        value_tokens = {_value_token(normalize_value(e.get("value"))) for e in conflict_entries}
         if k == "Diagnosis_etc":
-            merged_diag = merge_diagnosis_etc_values([e.get("value") for e in unique_entries])
+            merged_diag = merge_diagnosis_etc_values([e.get("value") for e in conflict_entries])
             if merged_diag is not None:
                 merged[k] = merged_diag
-            elif len(unique_entries) > 1:
-                conflicts[k] = unique_entries
-        elif len(unique_entries) == 1:
-            merged[k] = unique_entries[0]["value"]
-        elif len(unique_entries) > 1:
-            conflicts[k] = unique_entries
+            elif len(value_tokens) > 1:
+                conflicts[k] = conflict_entries
+            elif conflict_entries:
+                merged[k] = conflict_entries[0]["value"]
+        elif len(value_tokens) <= 1:
+            merged[k] = conflict_entries[0]["value"]
+        elif len(value_tokens) > 1:
+            conflicts[k] = conflict_entries
 
     return merged, conflicts, provenance
 
@@ -1297,6 +1586,7 @@ class PageResult:
     raw_json: Dict[str, Any]
     valid_json: Dict[str, Any]
     input_contexts: Dict[str, Dict[str, str]]
+    cdm_contexts: Dict[str, str]
     rejected_fields: Dict[str, Dict[str, Any]]
 
 
@@ -1307,6 +1597,7 @@ class MapAgentSpec:
     end_key: str
     rows: List["CDMRow"]
     candidates_block: str
+    route_name: str
 
 
 class CDMRetriever:
@@ -1378,6 +1669,7 @@ class CDMRetriever:
         self.vectorizer = TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 5), min_df=1)
         self.matrix = self.vectorizer.fit_transform(self._texts)
         self._full_cdm_prompt_block = self._build_full_cdm_prompt_block()
+        self._route_prompt_blocks: Dict[str, str] = {}
 
     def _build_full_cdm_prompt_block(self) -> str:
         parts: List[str] = []
@@ -1394,6 +1686,26 @@ class CDMRetriever:
 
     def full_cdm_prompt_block(self) -> str:
         return self._full_cdm_prompt_block
+
+    def route_rows(self, route_name: str) -> List["CDMRow"]:
+        route = str(route_name or DEFAULT_MAP_ROUTE).strip() or DEFAULT_MAP_ROUTE
+        if route in {MAP_ROUTE_PSG_REPORT_GENERAL, MAP_ROUTE_PSG_REPORT_EXTENSIVE, MAP_ROUTE_PSG_REPORT}:
+            return [row for row, _ in self.select_candidate_rows_for_labels(["psg_report"])]
+        if route == MAP_ROUTE_MORNING_QUESTIONNAIRE:
+            return [row for row, _ in self.select_candidate_rows_for_labels(list(MORNING_QUESTIONNAIRE_ROUTE_LABELS))]
+        if route == MAP_ROUTE_NIGHT_QUESTIONNAIRE:
+            return [row for row, _ in self.select_candidate_rows_for_labels(list(NIGHT_QUESTIONNAIRE_ROUTE_LABELS))]
+        return list(self.rows)
+
+    def prompt_block_for_route(self, route_name: str) -> str:
+        route = str(route_name or DEFAULT_MAP_ROUTE).strip() or DEFAULT_MAP_ROUTE
+        cached = self._route_prompt_blocks.get(route)
+        if cached:
+            return cached
+        rows = self.route_rows(route)
+        block = format_candidate_rows([(row, 1.0) for row in rows], include_score=False, max_chars=50000)
+        self._route_prompt_blocks[route] = block
+        return block
 
     def _build_document_label_rows(self) -> Dict[str, List["CDMRow"]]:
         out: Dict[str, List[CDMRow]] = {}
@@ -1531,9 +1843,10 @@ def format_candidate_rows(
     return "\n".join(parts)
 
 
-def build_map_agent_specs(retriever: CDMRetriever, num_agents: int) -> List[MapAgentSpec]:
+def build_map_agent_specs(retriever: CDMRetriever, num_agents: int, route_name: str = DEFAULT_MAP_ROUTE) -> List[MapAgentSpec]:
     n_agents = max(1, int(num_agents))
-    total = len(retriever.rows)
+    route_rows = retriever.route_rows(route_name)
+    total = len(route_rows)
     if total == 0:
         return []
 
@@ -1541,7 +1854,7 @@ def build_map_agent_specs(retriever: CDMRetriever, num_agents: int) -> List[MapA
     for idx in range(n_agents):
         start = (idx * total) // n_agents
         end = ((idx + 1) * total) // n_agents
-        rows = retriever.rows[start:end]
+        rows = route_rows[start:end]
         if not rows:
             continue
         start_key = rows[0].key
@@ -1556,6 +1869,7 @@ def build_map_agent_specs(retriever: CDMRetriever, num_agents: int) -> List[MapA
                 end_key=end_key,
                 rows=rows,
                 candidates_block=block,
+                route_name=route_name,
             )
         )
     logger.info(
@@ -1565,13 +1879,13 @@ def build_map_agent_specs(retriever: CDMRetriever, num_agents: int) -> List[MapA
         max(1, total // max(1, len(specs))),
     )
     return specs
-
+# - Convert table into human interpretable texts.
 OCR_SYSTEM = """
 # Role: You are a literal OCR engine for sleep-clinic questionnaires with Korean/English printed text, handwritings, tables, and marked answers by circles, checks, crosses, and other symbols.
 # Task: Perform OCR on all visible content on the scanned page as accurately as possible.
 # Guideline
 - Preserve original wording, script, numbers, punctuation, units, and visible structure as faithfully as plain text allows.
-- Convert table into human interpretable texts.
+- Construct a table as much as possible by texts.
 - Multiple choices can be given as numbers encircled, plain numbers, plain texts, square boxes, and empty slots for users to mark answers with circles, checks, crosses, or other symbols.
 - Mark a visibly chosen option inline as '[selected]'. Selected option should be clearly expressed without ambiguity. keep question-answer association explicit.
 - Use '[corrected from X to Y]' when a correction or overwrite is visible.
@@ -1589,73 +1903,65 @@ OCR_USER_PROMPT = (
 
 MAP_SYSTEM = """
 # Role: You are a clinical data mapping and parsing expert.
-# Task: Map extracted contents from sleep-clinic questionnaires to relevant CDM (common data model) keys exactly. Parse values to correct keys and create the final JSON.
+# Task: Map OCR text from sleep-clinic reports and questionnaires to exact CDM (common data model) keys exactly. Parse values to correct keys and create the final JSON.
 
-# Input:
-1) OCR text from a sleep questionnaire image
-2) Candidate CDM fields (keys) with descriptions/ranges/options
-
-# General Guidline
-- Use ONLY keys from the candidate CDM list.
-- Find the EXACT cdm keys that has the exactly same context/meaning of either Korean_Context or English_Context as the OCR text.
-- Fill the values to cdm keys following the candidate field format/range/options exactly. Find the right format, allowed range, and mapping option.
-- `filled_by` should be doctor when clearly staff/report-entered, patient when self-reported questionnaire, otherwise unknown.
-- 'question' should quote the exact item.
-- 'page' is one sentence summary what the page was about.
-
-# Specific-CDM Guideline
-- For Yes/No type options, map to the coded option using the option labels.
-e.g., answer can be scaled as yes: 1, no:2, but cdm might require no:0, yes:1
-- Occupation categorization steps
-    - Normalize occupation to Korean wording when possible.
-    - if CDM options exist for Occupation, map to the correct option code.
-    - if OCR answer indicates job-seeking/leave (e.g., 취준, 취업준비, 휴직), omit Occupation.
-- Diagnosis_etc special rule:
-    - 1st Position: `II. Diagnosis` section after `I. Result`.
-    - 2nd Position: Before `III. Conclusion and Recommendation`.
-    - Extract ONLY lines that start with '#'. Can be multiple lines. Merge them with \n e.g., "# ~ \n # ~"
-- PSQI 01-04 version rule:
-    - ONLY MAP to PSQI 01-04 keys when the OCR text is the PSQI questionniare items, not similar questions without the psqi questionnaire format.
-    - If OCR text explicitly contains even single `주중`/`주말` (or weekday/weekend wording), map to ONLY `_week` / `_free` keys for PSQI 01-04.
-    - If OCR text does not contain `주중`/`주말` (or weekday/weekend wording), map to ONLY non-week/free keys (`..._HH`, `..._MM`) for PSQI 01-04.
-- For numeric ranges like `a~b`:
-    - If field is time-like (sleep/wake time, latency, duration, HH/MM), store the median.
-    - If field is severity/frequency scale-like, store the more severe side.
-- For time HH:MM values:
-    - Often patient answers only one of them, HH or MM. For these cases, fill 0 in the other cdm key.
-
-# Cautions
-- Do NOT invent values.
-- Do NOT fill values that are not present.
-- STRICTLY review whether the OCR text has the same context/wording as the relevant CDM key's Korean_Context/English_Context. If not having same context/wording, do not map them.
+# Guideline
+1. INPUT
+You will get two inputs:
+    - OCR text from a sleep questionnaire image
+    - Candidate CDM fields (keys) with descriptions/ranges/options
+2. CDM KEY
+    - Read the provided OCR text line by line.
+    - Based on the candidate cdm keys provided and the OCR text, find the EXACT CDM key that the Korean_Context/English_Context has the exactly same wordings or meaning when comparing to the OCR text.
+        * Note: For official questionnaire cases, being semantically same is NOT sufficient. Each wording should be the same for these cases.
+                e.g., PSQI, ESS, SSS, FSS, BQ, ISI, RLS, IRLS, RBDSQ, PHQ, BDI, QOL, MQ
+        * Note: Find all matches. At the same time, be careful not to connect wrong cdm key to irrelevant text.
+3. CDM VALUE
+    - For the correct key, fill a value following the candidate field format/range/options exactly.
+        - e.g., answer can be scaled as yes: 1, no:2, but cdm might require no:0, yes:1
+    - For PSG tables, read row and column intersections explicitly. Do not guess from nearby values. 
+    - Do NOT invent values if not allowed by 'Special Rules'.
+    - Special Rules for filling CDM values
+        - For map_route_psg_report_general and map_route_psg_report_extensive
+            - Always attempt to emit Hospital_ID, Name, PSG_Date, PSG_No, PSG_Type, SEX, AGE, Height_cm, Weight_kg, BMI, Neckcir_cm when directly supported by the OCR text. Missing these fields is a serious error.
+        - Numeric ranges (i.e. 'a~b')
+            - If time values measured in time units (e.g., hrs, min, sec, day), store the median.
+            - If severity/frequency reported, store the more severe one. (e.g., waking frequency 3 times > 1 time)
+        - Time values in HH:MM (Exceptional case that allows value invention.)
+            - If a time answer is shown only in minutes, emit HH=0 and MM=<minutes>. If shown only in hours, emit HH=<hours> and MM=0.
+        - Occupation categorization
+            - Normalize occupation to Korean wording when possible.
+            - if CDM options exist for the occupation, map to the correct option code.
+            - if OCR answer indicates job-seeking/leave (e.g., 취준, 취업준비, 휴직), omit Occupation.
+        - Diagnosis_etc:
+            - 1st Position: `II. Diagnosis` section after `I. Result`.
+            - 2nd Position: Before `III. Conclusion and Recommendation`.
+            - Extract only the lines that begin with # from the source text. If multiple lines match, preserve their order and join them with newline characters.        
+        - PSQI 01-04 version rule:
+            - Find the OFFICIAL PSQI questions, not similar questions.
+            - If OCR text explicitly contains even single `주중`/`주말` (or weekday/weekend wording), map to ONLY `_week` / `_free` keys for PSQI 01-04.
+            - If OCR text does not contain `주중`/`주말` (or weekday/weekend wording), map to ONLY non-week/free keys (`..._HH`, `..._MM`) for PSQI 01-04.
+4. REVIEW
+    - Review your key-value decision carefully to reduce mistakes.
+    - Before finalizing, check whether any obvious directly supported candidate fields from the page header, questionnaire item list, or PSG tables were omitted.
+5. CONTEXT
+    - Context is used by later resolver agent to resolve between multiple values of the same CDM key.
+    - 'filled_by': doctor for diagnosis and diagnostic report, patient when self-reported questionnaire.
+    - 'question': The one sentence - exact question/context that matches to the CDM key in OCR text.
 
 # Output format
 Output JSON object only. Return ONE JSON object that maps CDM keys to objects with this schema:
 {
   "CDM_KEY": {
-    "value": <scalar>,
+    "CDM_Context": "<brief explanation copied from the Korean_Context/English_Context>",
+    "value": <value>,
     "input_context": {
-      "filled_by": "doctor|patient|unknown",
-      "question": "<exact question from OCR>",
-      "page": "<one sentence summary of what the page is>"
+      "filled_by": "doctor|patient",
+      "question": "<one sentence - exact question/context that matches to the CDM key in OCR text>"
     }
   }
 }
 """
-# # General Guidline
-# - First, internally write one sentence summary what the OCR text is about. Use this summary to decide which candidate CDM keys are relevant to the OCR text.
-# - Use ONLY keys from the candidate CDM list. Find RIGHT cdm csv keys relating the OCR text to Korean_Context/English_Context. 
-# - Always follow candidate field format/range/options exactly. For answers given, find the right format, allowed range, and mapped option.
-# - `filled_by` should be doctor when clearly staff/report-entered, patient when self-reported questionnaire, otherwise unknown.
-# - `question` should quote the relevant item text or related context.
-
-# Rules:
-# - Maximize recall: if OCR clearly provides a value and there is a matching candidate key, include it.
-# - For numeric fields, output numbers without unit text.
-# - Dates must follow CDM format/range (typically YYYYMMDD).
-# - If CDM separates HH/MM, output numeric HH and MM keys separately.
-# - Do not translate or transliterate person names; copy the script exactly as it appears in OCR.
-# - Prefer explicitly selected/circled/checked answers over inferred narrative statements.
 
 MAP_RECALL_SYSTEM = """You are a clinical data extraction assistant performing a second-pass recall step.
 You will be given:
@@ -1684,35 +1990,37 @@ Task:
 - Follow coded options/range/date rules exactly.
 - If uncertain, omit the key.
 - Use the same output schema as MAP step:
-  {"CDM_KEY":{"value":..., "input_context":{"filled_by":"doctor|patient|unknown","question":"...","page":"..."}}}
+  {"CDM_KEY":{"CDM_Context":"...","value":..., "input_context":{"filled_by":"doctor|patient","question":"..."}}}
 Output JSON object only.
 """
 
 CONFLICT_RESOLVER_SYSTEM = """
 # Role: You are a clinical data inconsistency resolver for sleep CDM extraction.
-# Input
-You will receive conflicting candidates for each CDM key, each candidate containing:
+# Task: Resolve only unresolved ambiguous CDM keys by choosing one candidate index.
+# Context: Plain code majority-vote has already been applied. Input contains only keys
+# where multiple normalized values are tied or otherwise unresolved.
+
+# Input per candidate
 - value
-- image/page source
-- input_context.filled_by
+- CDM_Context
 - input_context.question
-- input_context.page
+- page_type
 - CDM metadata (description, format/range, options)
 
-# Task
-Resolve each key by choosing one candidate index.
+# Critical decision rules
+1) Remove obvious context mismatches first.
+- Candidate question/page_type must match the CDM key semantics.
+2) Enforce CDM validity.
+- Prefer candidates consistent with options, format/range, and date constraints.
+3) Tie-break with source clarity.
+- Prefer candidates with clearer, more specific question evidence.
+4) Keep reason short and concrete.
 
-# Guideline - Decision rule:
-- Choose the most trustable and accurate value from the candidate whose context is closest to what the CDM key requires.
-- Use the CDM description/range/options + question context + page summary as the primary grounding.
-- Only official questionnaires should fill official questionnaire CDM fields
-- Use majority voting when reasoning lacks evidences.
-
-# Special rule
-- for Diagnosis_etc, if they are valid diagnostic items, merge them rather than selecting one of them.
+# Special case
+- Diagnosis_etc: if multiple candidates are valid diagnosis statements, merge them.
 
 # Output Format
-Output JSON only:
+Output JSON only and STRICTLY follow the instructed JSON format:
 {
   "resolved": {
     "CDM_KEY": {"chosen_index": <int>, "reason": "<brief reason>"}
@@ -1787,8 +2095,9 @@ async def gemini_map_to_json(
     llm: ChatGoogleGenerativeAI,
     ocr_text: str,
     candidates_block: str,
+    route_name: str = DEFAULT_MAP_ROUTE,
 ) -> Dict[str, Any]:
-    user = build_map_user_prompt(ocr_text, candidates_block)
+    user = build_map_user_prompt(ocr_text, candidates_block, route_name=route_name)
     msg = [
         SystemMessage(content=MAP_SYSTEM),
         HumanMessage(content=user),
@@ -1815,8 +2124,9 @@ async def gemini_map_additional_json(
     ocr_text: str,
     candidates_block: str,
     existing_json: Dict[str, Any],
+    route_name: str = DEFAULT_MAP_ROUTE,
 ) -> Dict[str, Any]:
-    user = build_map_recall_user_prompt(ocr_text, candidates_block, existing_json)
+    user = build_map_recall_user_prompt(ocr_text, candidates_block, existing_json, route_name=route_name)
     msg = [
         SystemMessage(content=MAP_RECALL_SYSTEM),
         HumanMessage(content=user),
@@ -1837,16 +2147,38 @@ async def gemini_map_additional_json(
         return safe_extract_json(fix.content)
 
 
+async def gemini_route_ocr_text(
+    llm: ChatGoogleGenerativeAI,
+    ocr_text: str,
+) -> Dict[str, Any]:
+    user = build_route_user_prompt(ocr_text)
+    msg = [
+        SystemMessage(content=MAP_ROUTE_SYSTEM),
+        HumanMessage(content=user),
+    ]
+    try:
+        resp = await ainvoke_with_retry(llm, msg)
+        raw = llm_content_to_text(resp.content)
+        return normalize_route_decision(safe_extract_json(raw), ocr_text)
+    except Exception as exc:
+        fallback = classify_map_route_heuristic(ocr_text)
+        fallback["reason"] = f"heuristic_fallback_after_route_error:{type(exc).__name__}"
+        logger.warning("Route classifier failed, falling back to heuristic router: %s", exc)
+        return fallback
+
+
 def merge_map_payload_into_stage(
     retriever: CDMRetriever,
     ocr_text: str,
     raw_payload: Dict[str, Any],
+    route_name: str,
     stage_raw: Dict[str, Any],
     stage_valid: Dict[str, Any],
     stage_contexts: Dict[str, Dict[str, str]],
+    stage_cdm_contexts: Dict[str, str],
     stage_rejected: Dict[str, Dict[str, Any]],
 ) -> None:
-    raw_values, raw_contexts = parse_value_context_map(raw_payload)
+    raw_values, raw_contexts, raw_cdm_contexts = parse_value_context_map(raw_payload)
     add_valid, add_rejected = validate_extracted_json(raw_values, retriever, ocr_text=ocr_text)
 
     for k, v in raw_payload.items():
@@ -1865,7 +2197,11 @@ def merge_map_payload_into_stage(
                 )
             continue
         stage_valid[k] = v
-        stage_contexts[k] = _normalize_input_context(raw_contexts.get(k))
+        ctx = _normalize_input_context(raw_contexts.get(k))
+        ctx["page_type"] = normalize_map_route_name(ctx.get("page_type") or route_name)
+        stage_contexts[k] = ctx
+        row = retriever.row_by_key.get(k)
+        stage_cdm_contexts[k] = str(raw_cdm_contexts.get(k) or (row.desc if row is not None else "")).strip()
 
 
 async def map_ocr_text_with_split_agents_live(
@@ -1873,30 +2209,41 @@ async def map_ocr_text_with_split_agents_live(
     retriever: CDMRetriever,
     ocr_text: str,
     map_agents: List[MapAgentSpec],
-) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, str]], Dict[str, Dict[str, Any]]]:
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, str]], Dict[str, str], Dict[str, Dict[str, Any]]]:
     stage_raw: Dict[str, Any] = {}
     stage_valid: Dict[str, Any] = {}
     stage_contexts: Dict[str, Dict[str, str]] = {}
+    stage_cdm_contexts: Dict[str, str] = {}
     stage_rejected: Dict[str, Dict[str, Any]] = {}
+    route_info = await gemini_route_ocr_text(llm, ocr_text)
+    route_name = str(route_info.get("route") or DEFAULT_MAP_ROUTE)
 
     async def _call(agent: MapAgentSpec):
         payload = await gemini_map_to_json(
             llm=llm,
             ocr_text=ocr_text,
             candidates_block=agent.candidates_block,
+            route_name=agent.route_name,
         )
         return agent, payload
 
     if not map_agents:
         # Fallback to full-CDM single-agent.
-        raw = await gemini_map_to_json(llm=llm, ocr_text=ocr_text, candidates_block=retriever.full_cdm_prompt_block())
+        raw = await gemini_map_to_json(
+            llm=llm,
+            ocr_text=ocr_text,
+            candidates_block=retriever.prompt_block_for_route(route_name),
+            route_name=route_name,
+        )
         merge_map_payload_into_stage(
             retriever=retriever,
             ocr_text=ocr_text,
             raw_payload=raw,
+            route_name=route_name,
             stage_raw=stage_raw,
             stage_valid=stage_valid,
             stage_contexts=stage_contexts,
+            stage_cdm_contexts=stage_cdm_contexts,
             stage_rejected=stage_rejected,
         )
     else:
@@ -1910,9 +2257,11 @@ async def map_ocr_text_with_split_agents_live(
                 retriever=retriever,
                 ocr_text=ocr_text,
                 raw_payload=payload,
+                route_name=route_name,
                 stage_raw=stage_raw,
                 stage_valid=stage_valid,
                 stage_contexts=stage_contexts,
+                stage_cdm_contexts=stage_cdm_contexts,
                 stage_rejected=stage_rejected,
             )
 
@@ -1924,6 +2273,7 @@ async def map_ocr_text_with_split_agents_live(
                 ocr_text=ocr_text,
                 candidates_block=agent.candidates_block,
                 existing_json=stage_valid,
+                route_name=agent.route_name,
             )
             return agent, payload
 
@@ -1938,37 +2288,50 @@ async def map_ocr_text_with_split_agents_live(
                     retriever=retriever,
                     ocr_text=ocr_text,
                     raw_payload=payload,
+                    route_name=route_name,
                     stage_raw=stage_raw,
                     stage_valid=stage_valid,
                     stage_contexts=stage_contexts,
+                    stage_cdm_contexts=stage_cdm_contexts,
                     stage_rejected=stage_rejected,
                 )
         else:
             recall_raw = await gemini_map_additional_json(
                 llm=llm,
                 ocr_text=ocr_text,
-                candidates_block=retriever.full_cdm_prompt_block(),
+                candidates_block=retriever.prompt_block_for_route(route_name),
                 existing_json=stage_valid,
+                route_name=route_name,
             )
             merge_map_payload_into_stage(
                 retriever=retriever,
                 ocr_text=ocr_text,
                 raw_payload=recall_raw,
+                route_name=route_name,
                 stage_raw=stage_raw,
                 stage_valid=stage_valid,
                 stage_contexts=stage_contexts,
+                stage_cdm_contexts=stage_cdm_contexts,
                 stage_rejected=stage_rejected,
             )
 
     backfill_additions, backfill_rejected = apply_core_backfill(stage_valid, retriever, ocr_text)
     for k, v in backfill_additions.items():
         stage_valid[k] = v
-        stage_contexts.setdefault(k, {"filled_by": "unknown", "question": "Derived from OCR header pattern"})
-        stage_raw.setdefault(k, {"value": v, "input_context": stage_contexts[k]})
+        stage_contexts.setdefault(k, {"filled_by": "", "question": "Derived from OCR header pattern", "page_type": route_name})
+        stage_cdm_contexts.setdefault(k, str(retriever.row_by_key.get(k).desc if retriever.row_by_key.get(k) is not None else "").strip())
+        stage_raw.setdefault(
+            k,
+            {
+                "CDM_Context": stage_cdm_contexts.get(k, ""),
+                "value": v,
+                "input_context": stage_contexts[k],
+            },
+        )
     for k, meta in backfill_rejected.items():
         stage_rejected.setdefault(k, meta)
 
-    return stage_raw, stage_valid, stage_contexts, stage_rejected
+    return stage_raw, stage_valid, stage_contexts, stage_cdm_contexts, stage_rejected
 
 
 def build_conflict_resolver_user_prompt(
@@ -1985,21 +2348,21 @@ def build_conflict_resolver_user_prompt(
         candidates: List[Dict[str, Any]] = []
         for idx, e in enumerate(entries):
             ctx = _normalize_input_context(e.get("input_context"))
+            page_type = normalize_map_route_name(ctx.get("page_type"))
             candidates.append(
                 {
                     "index": idx,
+                    "cdm_context": str(e.get("cdm_context") or (row.desc if row is not None else "")).strip(),
                     "value": e.get("value"),
-                    "image": e.get("image"),
-                    "filled_by": ctx.get("filled_by", "unknown"),
                     "question": _clip_prompt_text(ctx.get("question", ""), 260),
-                    "page": _clip_prompt_text(ctx.get("page", ""), 180),
+                    "page_type": page_type,
                 }
             )
 
         payload.append(
             {
                 "key": key,
-                "desc": row.desc if row is not None else "",
+                "cdm_context": row.desc if row is not None else "",
                 "format_range": row.format_range if row is not None else "",
                 "options": {k: v for k, v in opt_items},
                 "candidates": candidates,
@@ -2012,6 +2375,174 @@ def build_conflict_resolver_user_prompt(
         f"{json.dumps(payload, ensure_ascii=False)}\n\n"
         "Return JSON only in the required schema."
     )
+
+
+def _dedupe_question_list(values: Iterable[Any]) -> List[str]:
+    seen: set[str] = set()
+    out: List[str] = []
+    for v in values:
+        q = str(v or "").strip()
+        if not q:
+            continue
+        token = _normalize_text_token(q)
+        if token in seen:
+            continue
+        seen.add(token)
+        out.append(q)
+    return out
+
+
+def build_conflict_count_dataframe(
+    conflicts: Dict[str, List[Dict[str, Any]]],
+) -> pd.DataFrame:
+    """
+    Build a single conflict vote table:
+      CDM_KEY, value, count, input_context.question(list)
+    Group identity:
+      (CDM_KEY, normalized value token)
+    """
+    rows: List[Dict[str, Any]] = []
+    for key, entries in conflicts.items():
+        for e in entries:
+            ctx = _normalize_input_context(e.get("input_context"))
+            norm_value = normalize_value(e.get("value"))
+            rows.append(
+                {
+                    "CDM_KEY": key,
+                    "value": norm_value,
+                    "value_token": _value_token(norm_value),
+                    "input_context.question": str(ctx.get("question") or "").strip(),
+                }
+            )
+    if not rows:
+        return pd.DataFrame(columns=["CDM_KEY", "value", "count", "input_context.question"])
+
+    df = pd.DataFrame(rows)
+    grouped = (
+        df.groupby(["CDM_KEY", "value_token"], dropna=False, as_index=False)
+        .agg(
+            value=("value", "first"),
+            count=("value_token", "size"),
+            **{"input_context.question": ("input_context.question", _dedupe_question_list)},
+        )
+        .sort_values(["CDM_KEY", "count"], ascending=[True, False], kind="stable")
+        .reset_index(drop=True)
+    )
+    grouped["count"] = grouped["count"].astype(int)
+    return grouped[["CDM_KEY", "value", "count", "input_context.question"]]
+
+
+def _token_count_map(df_key: pd.DataFrame) -> Dict[str, int]:
+    out: Dict[str, int] = {}
+    if df_key.empty:
+        return out
+    for _, row in df_key.iterrows():
+        token = str(row.get("value_token", ""))
+        if not token:
+            continue
+        out[token] = out.get(token, 0) + int(row.get("count", 0) or 0)
+    return out
+
+
+def _unique_argmax_token(counts: Dict[str, int]) -> Optional[str]:
+    if not counts:
+        return None
+    top = max(counts.values())
+    winners = [tok for tok, c in counts.items() if c == top]
+    if len(winners) != 1:
+        return None
+    return winners[0]
+
+
+def _pick_entry_index_by_token(
+    entries: List[Dict[str, Any]],
+    chosen_token: str,
+) -> Optional[int]:
+    for idx, e in enumerate(entries):
+        if _value_token(normalize_value(e.get("value"))) == chosen_token:
+            return idx
+    return None
+
+
+def resolve_conflicts_by_majority_vote(
+    conflicts: Dict[str, List[Dict[str, Any]]],
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, List[Dict[str, Any]]], pd.DataFrame]:
+    """
+    Deterministic pre-resolver:
+    1) Aggregate conflicts into a single count dataframe.
+    2) Resolve by plain majority vote across normalized values.
+    3) Keep unresolved ties for LLM fallback.
+    """
+    vote_df = build_conflict_count_dataframe(conflicts)
+    vote_df_internal = vote_df.copy()
+    vote_df_internal["value_token"] = vote_df_internal["value"].map(_value_token)
+    overrides: Dict[str, Any] = {}
+    decisions: Dict[str, Any] = {}
+    pending: Dict[str, List[Dict[str, Any]]] = {}
+
+    for key, entries in conflicts.items():
+        key_df = vote_df_internal[vote_df_internal["CDM_KEY"] == key]
+        if key_df.empty:
+            pending[key] = entries
+            continue
+
+        unique_tokens = key_df["value_token"].dropna().astype(str).unique().tolist()
+        chosen_token: Optional[str] = None
+        rule_used = ""
+
+        if len(unique_tokens) == 1:
+            chosen_token = unique_tokens[0]
+            rule_used = "single_unique_value"
+        else:
+            counts = _token_count_map(key_df)
+            chosen_token = _unique_argmax_token(counts)
+            rule_used = "overall_majority"
+
+        if not chosen_token:
+            pending[key] = entries
+            continue
+
+        idx = _pick_entry_index_by_token(
+            entries=entries,
+            chosen_token=chosen_token,
+        )
+        if idx is None:
+            pending[key] = entries
+            continue
+
+        chosen = entries[idx]
+        vote_rows: List[Dict[str, Any]] = []
+        for _, row in key_df.iterrows():
+            questions_raw = row.get("input_context.question", [])
+            question_list: List[str] = []
+            if isinstance(questions_raw, list):
+                question_list = [str(q).strip() for q in questions_raw if str(q or "").strip()]
+            elif isinstance(questions_raw, tuple):
+                question_list = [str(q).strip() for q in list(questions_raw) if str(q or "").strip()]
+            try:
+                vote_value = json.loads(str(row.get("value_token", "null")))
+            except Exception:
+                vote_value = normalize_value(row.get("value"))
+            vote_rows.append(
+                {
+                    "value": vote_value,
+                    "count": int(row.get("count", 0) or 0),
+                    "question": question_list,
+                }
+            )
+
+        overrides[key] = chosen.get("value")
+        decisions[key] = {
+            "chosen_index": idx,
+            "chosen_value": chosen.get("value"),
+            "reason": f"code_majority:{rule_used}",
+            "source_image": chosen.get("image"),
+            "input_context": _normalize_input_context(chosen.get("input_context")),
+            "resolver_mode": "code_majority",
+            "vote_table": vote_rows,
+        }
+
+    return overrides, decisions, pending, vote_df
 
 
 async def parse_json_with_feedback_repair(
@@ -2066,24 +2597,23 @@ def build_single_conflict_payload(
     candidates: List[Dict[str, Any]] = []
     for idx, e in enumerate(entries):
         ctx = _normalize_input_context(e.get("input_context"))
+        page_type = normalize_map_route_name(ctx.get("page_type"))
         candidates.append(
             {
                 "index": idx,
+                "cdm_context": str(e.get("cdm_context") or (row.desc if row is not None else "")).strip(),
                 "value": e.get("value"),
-                "image": e.get("image"),
-                "filled_by": ctx.get("filled_by", "unknown"),
                 "question": _clip_prompt_text(ctx.get("question", ""), 260),
-                "page": _clip_prompt_text(ctx.get("page", ""), 180),
+                "page_type": page_type,
             }
         )
     return {
         "key": key,
-        "desc": row.desc if row is not None else "",
+        "cdm_context": row.desc if row is not None else "",
         "format_range": row.format_range if row is not None else "",
         "options": {k: v for k, v in opt_items},
         "candidates": candidates,
     }
-
 
 async def resolve_single_conflict_with_llm(
     llm: ChatGoogleGenerativeAI,
@@ -2156,6 +2686,7 @@ async def resolve_conflicts_keywise_fallback(
             "reason": reason,
             "source_image": chosen.get("image"),
             "input_context": _normalize_input_context(chosen.get("input_context")),
+            "resolver_mode": "llm_single",
         }
     return overrides, decisions
 
@@ -2169,10 +2700,24 @@ async def resolve_conflicts_with_llm(
     if not conflicts:
         return {}, {}
 
+    overrides: Dict[str, Any] = {}
+    decisions: Dict[str, Any] = {}
+    pending_conflicts: Dict[str, List[Dict[str, Any]]] = conflicts
+    try:
+        code_overrides, code_decisions, pending_conflicts, _ = resolve_conflicts_by_majority_vote(conflicts)
+        overrides.update(code_overrides)
+        decisions.update(code_decisions)
+    except Exception as e:
+        logger.warning("Code majority conflict pre-resolver failed for %s: %s", patient_name, e)
+        pending_conflicts = conflicts
+
+    if not pending_conflicts:
+        return overrides, decisions
+
     user = build_conflict_resolver_user_prompt(
         patient_name=patient_name,
         retriever=retriever,
-        conflicts=conflicts,
+        conflicts=pending_conflicts,
     )
     resp = await ainvoke_with_retry(
         llm,
@@ -2186,7 +2731,7 @@ async def resolve_conflicts_with_llm(
             llm=llm,
             raw_content=resp.content,
             schema_hint='{"resolved":{"CDM_KEY":{"chosen_index": <int>, "reason": "<brief reason>"}}}',
-            failed_context=f"patient={patient_name}\nkeys={json.dumps(list(conflicts.keys()), ensure_ascii=False)}\nrequest={user}",
+            failed_context=f"patient={patient_name}\nkeys={json.dumps(list(pending_conflicts.keys()), ensure_ascii=False)}\nrequest={user}",
             max_attempts=2,
         )
     except Exception as e:
@@ -2195,28 +2740,32 @@ async def resolve_conflicts_with_llm(
             patient_name,
             e,
         )
-        return await resolve_conflicts_keywise_fallback(
+        fb_overrides, fb_decisions = await resolve_conflicts_keywise_fallback(
             llm=llm,
             retriever=retriever,
             patient_name=patient_name,
-            conflicts=conflicts,
+            conflicts=pending_conflicts,
         )
+        overrides.update(fb_overrides)
+        decisions.update(fb_decisions)
+        return overrides, decisions
     resolved_obj = raw.get("resolved", raw)
     if not isinstance(resolved_obj, dict):
         logger.warning(
             "Conflict resolver returned non-dict payload for %s. Falling back to per-key resolver.",
             patient_name,
         )
-        return await resolve_conflicts_keywise_fallback(
+        fb_overrides, fb_decisions = await resolve_conflicts_keywise_fallback(
             llm=llm,
             retriever=retriever,
             patient_name=patient_name,
-            conflicts=conflicts,
+            conflicts=pending_conflicts,
         )
+        overrides.update(fb_overrides)
+        decisions.update(fb_decisions)
+        return overrides, decisions
 
-    overrides: Dict[str, Any] = {}
-    decisions: Dict[str, Any] = {}
-    for key, entries in conflicts.items():
+    for key, entries in pending_conflicts.items():
         item = resolved_obj.get(key)
         if not isinstance(item, dict):
             continue
@@ -2233,17 +2782,35 @@ async def resolve_conflicts_with_llm(
             "reason": str(item.get("reason", "")).strip(),
             "source_image": chosen.get("image"),
             "input_context": _normalize_input_context(chosen.get("input_context")),
+            "resolver_mode": "llm_batch",
         }
+    still_pending = {key: entries for key, entries in pending_conflicts.items() if key not in overrides}
+    if still_pending:
+        fallback_overrides, fallback_decisions = await resolve_conflicts_keywise_fallback(
+            llm=llm,
+            retriever=retriever,
+            patient_name=patient_name,
+            conflicts=still_pending,
+        )
+        overrides.update(fallback_overrides)
+        decisions.update(fallback_decisions)
     return overrides, decisions
 
 
-def build_map_user_prompt(ocr_text: str, candidates_block: str) -> str:
+def build_map_user_prompt(ocr_text: str, candidates_block: str, route_name: str = DEFAULT_MAP_ROUTE) -> str:
     label_catalog = build_document_label_catalog_text()
+    route = str(route_name or DEFAULT_MAP_ROUTE).strip() or DEFAULT_MAP_ROUTE
+    route_desc = MAP_ROUTE_DESCRIPTIONS.get(route, MAP_ROUTE_DESCRIPTIONS[DEFAULT_MAP_ROUTE])
     return f"""OCR TEXT:
 \"\"\"{ocr_text[:12000]}\"\"\"
 
 INTERNAL DOCUMENT/QUESTIONNAIRE TYPE CATALOG (use for internal categorization only; do not output labels):
 {label_catalog}
+
+PRE-CLASSIFIED PAGE ROUTE:
+- route: {route}
+- meaning: {route_desc}
+- Use this route as strong guidance when deciding which keys are relevant.
 
 CANDIDATE CDM FIELDS (use ONLY these keys):
 {candidates_block}
@@ -2255,18 +2822,25 @@ Return ONE JSON object only.
 Output schema reminder:
 {{
   "CDM_KEY": {{
-    "value": <scalar>,
+    "CDM_Context": "<brief explanation copied from the Korean_Context/English_Context>",
+    "value": <value>,
     "input_context": {{
-      "filled_by": "doctor|patient|unknown",
-      "question": "<exact or near-exact question text>",
-      "page": "<one sentence summary of what the page is>"
+      "filled_by": "doctor|patient",
+      "question": "<one sentence - exact question/context that matches to the CDM key in OCR text>"
     }}
   }}
 }}"""
 
 
-def build_map_recall_user_prompt(ocr_text: str, candidates_block: str, existing_json: Dict[str, Any]) -> str:
+def build_map_recall_user_prompt(
+    ocr_text: str,
+    candidates_block: str,
+    existing_json: Dict[str, Any],
+    route_name: str = DEFAULT_MAP_ROUTE,
+) -> str:
     label_catalog = build_document_label_catalog_text()
+    route = str(route_name or DEFAULT_MAP_ROUTE).strip() or DEFAULT_MAP_ROUTE
+    route_desc = MAP_ROUTE_DESCRIPTIONS.get(route, MAP_ROUTE_DESCRIPTIONS[DEFAULT_MAP_ROUTE])
     return f"""OCR TEXT:
 \"\"\"{ocr_text[:12000]}\"\"\"
 
@@ -2275,6 +2849,11 @@ EXISTING JSON (do not repeat these keys):
 
 INTERNAL DOCUMENT/QUESTIONNAIRE TYPE CATALOG (use for internal categorization only; do not output labels):
 {label_catalog}
+
+PRE-CLASSIFIED PAGE ROUTE:
+- route: {route}
+- meaning: {route_desc}
+- Use this route as strong guidance when deciding which keys are relevant.
 
 CANDIDATE CDM FIELDS (use ONLY these keys):
 {candidates_block}
@@ -2285,11 +2864,11 @@ Return ONLY additional key-value pairs as ONE JSON object.
 Output schema reminder:
 {{
   "CDM_KEY": {{
-    "value": <scalar>,
+    "CDM_Context": "<brief explanation copied from the Korean_Context/English_Context>",
+    "value": <value>,
     "input_context": {{
-      "filled_by": "doctor|patient|unknown",
-      "question": "<exact or near-exact question text>",
-      "page": "<one sentence summary of what the page is>"
+      "filled_by": "doctor|patient",
+      "question": "<one sentence - exact question/context that matches to the CDM key in OCR text>"
     }}
   }}
 }}"""
@@ -2335,9 +2914,9 @@ def build_ocr_batch_request(image_path: Path, batch_image_max_side: int) -> Dict
     }
 
 
-def build_map_batch_request(ocr_text: str, candidates_block: str) -> Dict[str, Any]:
+def build_map_batch_request(ocr_text: str, candidates_block: str, route_name: str = DEFAULT_MAP_ROUTE) -> Dict[str, Any]:
     return {
-        "contents": [{"role": "user", "parts": [{"text": build_map_user_prompt(ocr_text, candidates_block)}]}],
+        "contents": [{"role": "user", "parts": [{"text": build_map_user_prompt(ocr_text, candidates_block, route_name=route_name)}]}],
         "systemInstruction": {"parts": [{"text": MAP_SYSTEM}]},
         "generationConfig": {
             "temperature": 0.0,
@@ -2346,12 +2925,17 @@ def build_map_batch_request(ocr_text: str, candidates_block: str) -> Dict[str, A
     }
 
 
-def build_map_recall_batch_request(ocr_text: str, candidates_block: str, existing_json: Dict[str, Any]) -> Dict[str, Any]:
+def build_map_recall_batch_request(
+    ocr_text: str,
+    candidates_block: str,
+    existing_json: Dict[str, Any],
+    route_name: str = DEFAULT_MAP_ROUTE,
+) -> Dict[str, Any]:
     return {
         "contents": [
             {
                 "role": "user",
-                "parts": [{"text": build_map_recall_user_prompt(ocr_text, candidates_block, existing_json)}],
+                "parts": [{"text": build_map_recall_user_prompt(ocr_text, candidates_block, existing_json, route_name=route_name)}],
             }
         ],
         "systemInstruction": {"parts": [{"text": MAP_RECALL_SYSTEM}]},
@@ -2558,6 +3142,7 @@ async def image_to_cdm_json(
         raw_json=raw_obj,
         valid_json=valid_obj,
         input_contexts=valid_contexts,
+        cdm_contexts={k: str(retriever.row_by_key.get(k).desc if retriever.row_by_key.get(k) is not None else "").strip() for k in valid_obj.keys()},
         rejected_fields=rejected_fields,
     )
 
@@ -2664,6 +3249,7 @@ def build_patient_result(
             )
             context_json = {
                 k: {
+                    "CDM_Context": str(pr.cdm_contexts.get(k, "")).strip(),
                     "value": v,
                     "input_context": _normalize_input_context(pr.input_contexts.get(k)),
                 }
@@ -2723,6 +3309,215 @@ def build_patient_result(
     }
 
 
+def _format_markdown_scalar(v: Any) -> str:
+    nv = normalize_value(v)
+    if nv is None:
+        return "(blank)"
+    if isinstance(nv, str):
+        s = nv.replace("\r\n", "\n").replace("\r", "\n").strip()
+        if not s:
+            return "(blank)"
+        return s
+    return str(nv)
+
+
+def _markdown_cell(v: Any) -> str:
+    text = _format_markdown_scalar(v)
+    return text.replace("\n", "<br>").replace("|", "\\|")
+
+
+def _value_sort_key(v: Any) -> Tuple[int, str]:
+    nv = normalize_value(v)
+    if nv is None:
+        return (2, "")
+    if isinstance(nv, (int, float)) and not isinstance(nv, bool):
+        return (0, f"{float(nv):020.6f}")
+    return (1, str(nv))
+
+
+def _format_markdown_list(items: Iterable[Any], empty_text: str = "(none)") -> str:
+    vals = [str(x).strip() for x in items if str(x or "").strip()]
+    if not vals:
+        return empty_text
+    return "; ".join(vals)
+
+
+def _aggregate_conflict_entries(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for entry in entries:
+        value = normalize_value(entry.get("value"))
+        token = _value_token(value)
+        ctx = _normalize_input_context(entry.get("input_context"))
+        slot = grouped.setdefault(
+            token,
+            {
+                "value": value,
+                "count": 0,
+                "questions": [],
+                "images": [],
+                "page_types": [],
+                "filled_bys": [],
+            },
+        )
+        slot["count"] += 1
+
+        question = str(ctx.get("question") or "").strip()
+        if question and question not in slot["questions"]:
+            slot["questions"].append(question)
+
+        image = str(entry.get("image") or "").strip()
+        if image and image not in slot["images"]:
+            slot["images"].append(image)
+
+        page_type = normalize_map_route_name(ctx.get("page_type"))
+        if page_type and page_type not in slot["page_types"]:
+            slot["page_types"].append(page_type)
+
+        filled_by = _normalize_filled_by(ctx.get("filled_by"))
+        if filled_by and filled_by not in slot["filled_bys"]:
+            slot["filled_bys"].append(filled_by)
+
+    rows = list(grouped.values())
+    rows.sort(key=lambda row: (-int(row.get("count", 0) or 0), _value_sort_key(row.get("value"))))
+    return rows
+
+
+def build_conflict_markdown_report(
+    patient_name: str,
+    row: Optional[Dict[str, Any]],
+    conflicts: Dict[str, List[Dict[str, Any]]],
+    conflict_resolution: Dict[str, Any],
+) -> str:
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    mode_counts = Counter(
+        str(v.get("resolver_mode") or "unresolved")
+        for v in (conflict_resolution or {}).values()
+    )
+    lines: List[str] = [
+        f"# Conflict Report: {patient_name}",
+        "",
+        f"- Generated: `{now_str}`",
+        "- Conflict definition: same `CDM_KEY` with more than one different normalized value.",
+        f"- Conflict keys: `{len(conflicts)}`",
+        f"- Resolved by code: `{mode_counts.get('code_majority', 0)}`",
+        f"- Resolved by LLM batch: `{mode_counts.get('llm_batch', 0)}`",
+        f"- Resolved by LLM single: `{mode_counts.get('llm_single', 0)}`",
+        "",
+    ]
+
+    if not conflicts:
+        lines.extend(
+            [
+                "## Summary",
+                "",
+                "No conflicts were detected for this patient.",
+                "",
+            ]
+        )
+        return "\n".join(lines).strip() + "\n"
+
+    lines.extend(
+        [
+            "## Conflict Index",
+            "",
+        ]
+    )
+    conflict_keys = sorted(conflicts.keys())
+    for idx, key in enumerate(conflict_keys, start=1):
+        decision = conflict_resolution.get(key, {}) or {}
+        candidate_values = _aggregate_conflict_entries(conflicts[key])
+        candidate_text = ", ".join(
+            f"`{_format_markdown_scalar(item.get('value'))}` x{int(item.get('count', 0) or 0)}"
+            for item in candidate_values
+        )
+        final_value = row.get(key) if isinstance(row, dict) else decision.get("chosen_value")
+        resolver_mode = str(decision.get("resolver_mode") or "unresolved")
+        lines.append(
+            f"{idx}. `{key}` -> final `{_format_markdown_scalar(final_value)}` via `{resolver_mode}`"
+        )
+        lines.append(f"   Candidates: {candidate_text}")
+        lines.append("")
+
+    for idx, key in enumerate(conflict_keys, start=1):
+        entries = conflicts[key]
+        decision = conflict_resolution.get(key, {}) or {}
+        chosen_idx = _coerce_int(decision.get("chosen_index"))
+        chosen_image = str(decision.get("source_image") or "").strip()
+        chosen_value = decision.get("chosen_value")
+        if chosen_value is None and isinstance(row, dict):
+            chosen_value = row.get(key)
+        reason = str(decision.get("reason") or "").strip()
+        resolver_mode = str(decision.get("resolver_mode") or "unresolved")
+        chosen_ctx = _normalize_input_context(decision.get("input_context"))
+        aggregated = _aggregate_conflict_entries(entries)
+
+        lines.extend(
+            [
+                "",
+                f"## {idx}. `{key}`",
+                "",
+                f"- Final value: `{_format_markdown_scalar(chosen_value)}`",
+                f"- Resolver: `{resolver_mode}`",
+            ]
+        )
+        if chosen_idx is not None:
+            lines.append(f"- Chosen candidate index: `{chosen_idx}`")
+        if chosen_image:
+            lines.append(f"- Chosen source image: `{chosen_image}`")
+        if chosen_ctx.get("page_type"):
+            lines.append(f"- Chosen page type: `{chosen_ctx.get('page_type')}`")
+        if chosen_ctx.get("filled_by"):
+            lines.append(f"- Chosen source type: `{chosen_ctx.get('filled_by')}`")
+        if chosen_ctx.get("question"):
+            lines.append(f"- Chosen question/context: `{chosen_ctx.get('question')}`")
+        if reason:
+            lines.append(f"- Reason: {reason}")
+
+        lines.extend(
+            [
+                "",
+                "### Candidate Summary",
+                "",
+            ]
+        )
+        for option_idx, item in enumerate(aggregated, start=1):
+            lines.append(f"#### Option {option_idx}")
+            lines.append("")
+            lines.append(f"- Value: `{_format_markdown_scalar(item.get('value'))}`")
+            lines.append(f"- Count: `{int(item.get('count', 0) or 0)}`")
+            lines.append(f"- Filled by: {_format_markdown_list(item.get('filled_bys') or [])}")
+            lines.append(f"- Page types: {_format_markdown_list(item.get('page_types') or [])}")
+            lines.append(f"- Source images: {_format_markdown_list(item.get('images') or [])}")
+            lines.append("- Questions / contexts:")
+            question_list = item.get("questions") or []
+            if question_list:
+                for q in question_list:
+                    lines.append(f"  - `{str(q).strip()}`")
+            else:
+                lines.append("  - (none)")
+            lines.append("")
+
+        lines.extend(
+            [
+                "### Raw Candidates",
+                "",
+            ]
+        )
+        for entry_idx, entry in enumerate(entries):
+            ctx = _normalize_input_context(entry.get("input_context"))
+            marker = " <- chosen" if chosen_idx is not None and entry_idx == chosen_idx else ""
+            lines.append(f"#### Candidate {entry_idx}{marker}")
+            lines.append("")
+            lines.append(f"- Value: `{_format_markdown_scalar(entry.get('value'))}`")
+            lines.append(f"- Image: `{str(entry.get('image') or '').strip()}`")
+            lines.append(f"- Filled by: {_format_markdown_scalar(ctx.get('filled_by'))}")
+            lines.append(f"- Page type: `{_format_markdown_scalar(ctx.get('page_type'))}`")
+            lines.append(f"- Question / context: `{_format_markdown_scalar(ctx.get('question'))}`")
+            lines.append("")
+
+    return "\n".join(lines).strip() + "\n"
+
+
 def write_patient_outputs(output_dir: Path, patient_name: str, res: Dict[str, Any], output_columns: List[str]) -> None:
     # Per-patient CSV
     if res["row"] is not None:
@@ -2774,6 +3569,19 @@ def write_patient_outputs(output_dir: Path, patient_name: str, res: Dict[str, An
         (output_dir / "conflict_resolution").mkdir(exist_ok=True)
         (output_dir / "conflict_resolution" / f"{patient_name}_resolution.json").write_text(
             json.dumps(res["conflict_resolution"], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    if res.get("conflicts") or res.get("conflict_resolution"):
+        (output_dir / "conflict_reports").mkdir(exist_ok=True)
+        report_md = build_conflict_markdown_report(
+            patient_name=patient_name,
+            row=res.get("row"),
+            conflicts=res.get("conflicts") or {},
+            conflict_resolution=res.get("conflict_resolution") or {},
+        )
+        (output_dir / "conflict_reports" / f"{patient_name}_conflict_report.md").write_text(
+            report_md,
             encoding="utf-8",
         )
 
@@ -2902,7 +3710,7 @@ async def process_one_patient(
                 }
             )
             continue
-        raw_obj, valid_obj, valid_contexts, rejected_fields = out
+        raw_obj, valid_obj, valid_contexts, valid_cdm_contexts, rejected_fields = out
         page_results.append(
             PageResult(
                 image_name=bundle_name,
@@ -2910,6 +3718,7 @@ async def process_one_patient(
                 raw_json=raw_obj,
                 valid_json=valid_obj,
                 input_contexts=valid_contexts,
+                cdm_contexts=valid_cdm_contexts,
                 rejected_fields=rejected_fields,
             )
         )
@@ -3235,15 +4044,21 @@ def process_patients_with_batch_api(
                     req_meta: Dict[str, Dict[str, Any]] = {}
                     with map_requests_path.open("w", encoding="utf-8") as f:
                         for bundle in map_bundle_plan:
+                            route_name = str(classify_map_route(bundle["ocr_text"]).get("route") or DEFAULT_MAP_ROUTE)
                             if map_agents:
-                                for aidx, agent in enumerate(map_agents, start=1):
+                                route_agents = build_map_agent_specs(retriever, len(map_agents), route_name=route_name)
+                                for aidx, agent in enumerate(route_agents, start=1):
                                     req_key = f"{bundle['bundle_key']}::A{aidx}"
-                                    req = build_map_batch_request(bundle["ocr_text"], agent.candidates_block)
+                                    req = build_map_batch_request(bundle["ocr_text"], agent.candidates_block, route_name=agent.route_name)
                                     f.write(json.dumps({"key": req_key, "request": req}, ensure_ascii=False) + "\n")
                                     req_meta[req_key] = {"bundle_key": bundle["bundle_key"], "agent_name": agent.name}
                             else:
                                 req_key = f"{bundle['bundle_key']}::A1"
-                                req = build_map_batch_request(bundle["ocr_text"], retriever.full_cdm_prompt_block())
+                                req = build_map_batch_request(
+                                    bundle["ocr_text"],
+                                    retriever.prompt_block_for_route(route_name),
+                                    route_name=route_name,
+                                )
                                 f.write(json.dumps({"key": req_key, "request": req}, ensure_ascii=False) + "\n")
                                 req_meta[req_key] = {"bundle_key": bundle["bundle_key"], "agent_name": "single_full"}
 
@@ -3274,6 +4089,7 @@ def process_patients_with_batch_api(
                             "raw_json": {},
                             "valid_json": {},
                             "input_contexts": {},
+                            "cdm_contexts": {},
                             "rejected_fields": {},
                         }
 
@@ -3329,9 +4145,11 @@ def process_patients_with_batch_api(
                             retriever=retriever,
                             ocr_text=str(stage.get("ocr_text", "")),
                             raw_payload=raw_payload,
+                            route_name=str(meta.get("route_name") or DEFAULT_MAP_ROUTE),
                             stage_raw=stage["raw_json"],
                             stage_valid=stage["valid_json"],
                             stage_contexts=stage["input_contexts"],
+                            stage_cdm_contexts=stage["cdm_contexts"],
                             stage_rejected=stage["rejected_fields"],
                         )
 
@@ -3348,9 +4166,21 @@ def process_patients_with_batch_api(
                             stage["valid_json"][bk] = bv
                             stage["input_contexts"].setdefault(
                                 bk,
-                                {"filled_by": "unknown", "question": "Derived from OCR header pattern"},
+                                {"filled_by": "", "question": "Derived from OCR header pattern", "page_type": ""},
                             )
-                            stage["raw_json"].setdefault(bk, {"value": bv, "input_context": stage["input_contexts"][bk]})
+                            row = retriever.row_by_key.get(bk)
+                            stage["cdm_contexts"].setdefault(
+                                bk,
+                                str(row.desc if row is not None else "").strip(),
+                            )
+                            stage["raw_json"].setdefault(
+                                bk,
+                                {
+                                    "CDM_Context": stage["cdm_contexts"].get(bk, ""),
+                                    "value": bv,
+                                    "input_context": stage["input_contexts"][bk],
+                                },
+                            )
                         for bk, meta in backfill_rejected.items():
                             stage["rejected_fields"].setdefault(bk, meta)
 
@@ -3371,6 +4201,7 @@ def process_patients_with_batch_api(
                                 raw_json=stage["raw_json"],
                                 valid_json=stage["valid_json"],
                                 input_contexts=stage.get("input_contexts", {}),
+                                cdm_contexts=stage.get("cdm_contexts", {}),
                                 rejected_fields=stage["rejected_fields"],
                             )
                         )

@@ -1,0 +1,543 @@
+{
+  "run_a": "/home/yhlee/human_workspace/0_research/dataCollection/out_patient10_frozenlatestocr_route_gpt54_map_gpt54_resolve_keyrun_20260314",
+  "run_b": "/home/yhlee/human_workspace/0_research/dataCollection/out_patient10_live_gemini31propreview_all_20260314",
+  "summaries": {
+    "ocr": {
+      "files_a": 25,
+      "files_b": 25,
+      "compared": 25,
+      "identical": 0,
+      "different": 25,
+      "avg_similarity": 0.6985818441460799,
+      "examples": [
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0001.txt",
+          "status": "different",
+          "similarity": 0.154,
+          "chars_a": 3572,
+          "chars_b": 323
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0002.txt",
+          "status": "different",
+          "similarity": 0.0059,
+          "chars_a": 2683,
+          "chars_b": 8
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0003.txt",
+          "status": "different",
+          "similarity": 0.2853,
+          "chars_a": 576,
+          "chars_b": 756
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0004.txt",
+          "status": "different",
+          "similarity": 0.4289,
+          "chars_a": 724,
+          "chars_b": 260
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0005.txt",
+          "status": "different",
+          "similarity": 0.6069,
+          "chars_a": 369,
+          "chars_b": 468
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0006.txt",
+          "status": "different",
+          "similarity": 0.5204,
+          "chars_a": 2245,
+          "chars_b": 2309
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0007.txt",
+          "status": "different",
+          "similarity": 0.9242,
+          "chars_a": 313,
+          "chars_b": 360
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0008.txt",
+          "status": "different",
+          "similarity": 0.8034,
+          "chars_a": 1266,
+          "chars_b": 1109
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0009.txt",
+          "status": "different",
+          "similarity": 0.7841,
+          "chars_a": 783,
+          "chars_b": 1084
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0010.txt",
+          "status": "different",
+          "similarity": 0.824,
+          "chars_a": 804,
+          "chars_b": 866
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0011.txt",
+          "status": "different",
+          "similarity": 0.5446,
+          "chars_a": 1009,
+          "chars_b": 570
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0012.txt",
+          "status": "different",
+          "similarity": 0.8805,
+          "chars_a": 1114,
+          "chars_b": 1212
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0013.txt",
+          "status": "different",
+          "similarity": 0.772,
+          "chars_a": 996,
+          "chars_b": 1004
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0014.txt",
+          "status": "different",
+          "similarity": 0.8414,
+          "chars_a": 1258,
+          "chars_b": 1687
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0015.txt",
+          "status": "different",
+          "similarity": 0.7617,
+          "chars_a": 787,
+          "chars_b": 799
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0016.txt",
+          "status": "different",
+          "similarity": 0.8714,
+          "chars_a": 1286,
+          "chars_b": 1489
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0017.txt",
+          "status": "different",
+          "similarity": 0.8391,
+          "chars_a": 1074,
+          "chars_b": 1138
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0018.txt",
+          "status": "different",
+          "similarity": 0.699,
+          "chars_a": 1344,
+          "chars_b": 1889
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0019.txt",
+          "status": "different",
+          "similarity": 0.6376,
+          "chars_a": 949,
+          "chars_b": 1118
+        },
+        {
+          "file": "S20260210213237804797_JUYOUNG.KIM1102_email_0020.txt",
+          "status": "different",
+          "similarity": 0.8258,
+          "chars_a": 1052,
+          "chars_b": 1307
+        }
+      ]
+    },
+    "route": {
+      "files_a": 25,
+      "files_b": 25,
+      "same_route": 22,
+      "different_route": 3,
+      "examples": [
+        {
+          "file": "bundle_0001__S20260210213237804797_JUYOUNG.KIM1102_email_0001.meta.json",
+          "route_a": "map_route_psg_report_extensive",
+          "route_b": "map_route_psg_report_general"
+        },
+        {
+          "file": "bundle_0002__S20260210213237804797_JUYOUNG.KIM1102_email_0002.meta.json",
+          "route_a": "map_route_psg_report_general",
+          "route_b": "map_route_night_questionnaire"
+        },
+        {
+          "file": "bundle_0009__S20260210213237804797_JUYOUNG.KIM1102_email_0009.meta.json",
+          "route_a": "map_route_night_questionnaire",
+          "route_b": "map_route_psg_report_general"
+        }
+      ]
+    },
+    "map": {
+      "files_a": 25,
+      "files_b": 25,
+      "same_pages": 10,
+      "different_pages": 15,
+      "shared_key_value_match_rate": 0.8901098901098901,
+      "examples": [
+        {
+          "file": "bundle_0001__S20260210213237804797_JUYOUNG.KIM1102_email_0001.valid.json",
+          "keys_a": 47,
+          "keys_b": 8,
+          "shared_keys": 8,
+          "same_values": 7
+        },
+        {
+          "file": "bundle_0002__S20260210213237804797_JUYOUNG.KIM1102_email_0002.valid.json",
+          "keys_a": 18,
+          "keys_b": 0,
+          "shared_keys": 0,
+          "same_values": 0
+        },
+        {
+          "file": "bundle_0003__S20260210213237804797_JUYOUNG.KIM1102_email_0003.valid.json",
+          "keys_a": 4,
+          "keys_b": 3,
+          "shared_keys": 3,
+          "same_values": 2
+        },
+        {
+          "file": "bundle_0005__S20260210213237804797_JUYOUNG.KIM1102_email_0005.valid.json",
+          "keys_a": 3,
+          "keys_b": 2,
+          "shared_keys": 2,
+          "same_values": 2
+        },
+        {
+          "file": "bundle_0006__S20260210213237804797_JUYOUNG.KIM1102_email_0006.valid.json",
+          "keys_a": 53,
+          "keys_b": 11,
+          "shared_keys": 11,
+          "same_values": 11
+        },
+        {
+          "file": "bundle_0008__S20260210213237804797_JUYOUNG.KIM1102_email_0008.valid.json",
+          "keys_a": 18,
+          "keys_b": 18,
+          "shared_keys": 18,
+          "same_values": 17
+        },
+        {
+          "file": "bundle_0009__S20260210213237804797_JUYOUNG.KIM1102_email_0009.valid.json",
+          "keys_a": 15,
+          "keys_b": 10,
+          "shared_keys": 10,
+          "same_values": 6
+        },
+        {
+          "file": "bundle_0010__S20260210213237804797_JUYOUNG.KIM1102_email_0010.valid.json",
+          "keys_a": 10,
+          "keys_b": 9,
+          "shared_keys": 9,
+          "same_values": 8
+        },
+        {
+          "file": "bundle_0011__S20260210213237804797_JUYOUNG.KIM1102_email_0011.valid.json",
+          "keys_a": 18,
+          "keys_b": 1,
+          "shared_keys": 1,
+          "same_values": 1
+        },
+        {
+          "file": "bundle_0012__S20260210213237804797_JUYOUNG.KIM1102_email_0012.valid.json",
+          "keys_a": 15,
+          "keys_b": 2,
+          "shared_keys": 2,
+          "same_values": 1
+        },
+        {
+          "file": "bundle_0013__S20260210213237804797_JUYOUNG.KIM1102_email_0013.valid.json",
+          "keys_a": 6,
+          "keys_b": 6,
+          "shared_keys": 6,
+          "same_values": 5
+        },
+        {
+          "file": "bundle_0014__S20260210213237804797_JUYOUNG.KIM1102_email_0014.valid.json",
+          "keys_a": 18,
+          "keys_b": 15,
+          "shared_keys": 15,
+          "same_values": 15
+        },
+        {
+          "file": "bundle_0015__S20260210213237804797_JUYOUNG.KIM1102_email_0015.valid.json",
+          "keys_a": 10,
+          "keys_b": 10,
+          "shared_keys": 10,
+          "same_values": 1
+        },
+        {
+          "file": "bundle_0018__S20260210213237804797_JUYOUNG.KIM1102_email_0018.valid.json",
+          "keys_a": 20,
+          "keys_b": 11,
+          "shared_keys": 10,
+          "same_values": 9
+        },
+        {
+          "file": "bundle_0019__S20260210213237804797_JUYOUNG.KIM1102_email_0019.valid.json",
+          "keys_a": 5,
+          "keys_b": 4,
+          "shared_keys": 4,
+          "same_values": 4
+        }
+      ]
+    },
+    "final": {
+      "fields_a": 691,
+      "fields_b": 691,
+      "same_fields": 605,
+      "different_fields": 86,
+      "examples": [
+        {
+          "field": "AHI_lat",
+          "a": "1.2",
+          "b": ""
+        },
+        {
+          "field": "AHI_lat_N1",
+          "a": "0.7",
+          "b": ""
+        },
+        {
+          "field": "AHI_lat_N2",
+          "a": "1.5",
+          "b": ""
+        },
+        {
+          "field": "AHI_lat_N3",
+          "a": "0",
+          "b": ""
+        },
+        {
+          "field": "AHI_lat_NREM",
+          "a": "1.2",
+          "b": ""
+        },
+        {
+          "field": "AHI_lat_REM",
+          "a": "1.3",
+          "b": ""
+        },
+        {
+          "field": "AHI_sup",
+          "a": "3.4",
+          "b": ""
+        },
+        {
+          "field": "AHI_sup_N1",
+          "a": "5.3",
+          "b": ""
+        },
+        {
+          "field": "AHI_sup_N2",
+          "a": "1.7",
+          "b": ""
+        },
+        {
+          "field": "AHI_sup_N3",
+          "a": "0",
+          "b": ""
+        },
+        {
+          "field": "AHI_sup_NREM",
+          "a": "3.4",
+          "b": ""
+        },
+        {
+          "field": "AHI_sup_REM",
+          "a": "0",
+          "b": ""
+        },
+        {
+          "field": "AHI_total",
+          "a": "1.6",
+          "b": ""
+        },
+        {
+          "field": "AI_cent",
+          "a": "0",
+          "b": ""
+        },
+        {
+          "field": "AI_cent_NREM",
+          "a": "0",
+          "b": ""
+        },
+        {
+          "field": "AI_cent_REM",
+          "a": "0",
+          "b": ""
+        },
+        {
+          "field": "AI_mix",
+          "a": "0",
+          "b": ""
+        },
+        {
+          "field": "AI_mix_NREM",
+          "a": "0",
+          "b": ""
+        },
+        {
+          "field": "AI_mix_REM",
+          "a": "0",
+          "b": ""
+        },
+        {
+          "field": "AI_obs",
+          "a": "0.7",
+          "b": ""
+        },
+        {
+          "field": "AI_obs_NREM",
+          "a": "0.6",
+          "b": ""
+        },
+        {
+          "field": "AI_obs_REM",
+          "a": "1.3",
+          "b": ""
+        },
+        {
+          "field": "Arousal_LM_idx",
+          "a": "0.8",
+          "b": ""
+        },
+        {
+          "field": "Arousal_PLM_idx",
+          "a": "9.3",
+          "b": ""
+        },
+        {
+          "field": "Arousal_PLM_idx_re",
+          "a": "9.3",
+          "b": ""
+        },
+        {
+          "field": "Arousal_idx",
+          "a": "28",
+          "b": ""
+        },
+        {
+          "field": "Arousal_resp_idx",
+          "a": "0.8",
+          "b": ""
+        },
+        {
+          "field": "Arousal_snoring_idx",
+          "a": "0",
+          "b": ""
+        },
+        {
+          "field": "Arousal_spont_idx",
+          "a": "16.6",
+          "b": ""
+        },
+        {
+          "field": "BMI",
+          "a": "18.8",
+          "b": "28.8"
+        },
+        {
+          "field": "BQ_01",
+          "a": "3",
+          "b": "2"
+        },
+        {
+          "field": "BQ_02",
+          "a": "3",
+          "b": "2"
+        },
+        {
+          "field": "BQ_03",
+          "a": "2",
+          "b": "1"
+        },
+        {
+          "field": "BQ_04",
+          "a": "4",
+          "b": "3"
+        },
+        {
+          "field": "BQ_05",
+          "a": "2",
+          "b": "1"
+        },
+        {
+          "field": "BQ_07",
+          "a": "2",
+          "b": "1"
+        },
+        {
+          "field": "BQ_08",
+          "a": "2",
+          "b": "1"
+        },
+        {
+          "field": "BQ_09",
+          "a": "2",
+          "b": "1"
+        },
+        {
+          "field": "BQ_10",
+          "a": "2",
+          "b": "1"
+        },
+        {
+          "field": "Database_ID",
+          "a": "001_20140612_137_P",
+          "b": ""
+        }
+      ]
+    }
+  },
+  "ocr_map_summary_a": {
+    "patient_name": "Patient_10",
+    "images_total": 25,
+    "ocr_ok": 25,
+    "ocr_fail": 0,
+    "map_ok": 25,
+    "map_fail": 0,
+    "duplicates_dropped": 0,
+    "total_elapsed_seconds": 479.49750482593663,
+    "output_row_non_null_keys": 243,
+    "evaluation_semantic_accuracy": null,
+    "evaluation_precision": null,
+    "evaluation_recall": null,
+    "evaluation_f1": null,
+    "openai_usage_request_count": 54,
+    "openai_usage_input_tokens": 382088,
+    "openai_usage_output_tokens": 41694,
+    "openai_usage_total_tokens": 423782,
+    "openai_usage_cached_input_tokens": 0,
+    "openai_usage_reasoning_output_tokens": 0
+  },
+  "ocr_map_summary_b": {
+    "patient_name": "Patient_10",
+    "images_total": 25,
+    "ocr_ok": 25,
+    "ocr_fail": 0,
+    "map_ok": 25,
+    "map_fail": 0,
+    "duplicates_dropped": 0,
+    "total_elapsed_seconds": 1597.1460775570013,
+    "output_row_non_null_keys": 173,
+    "evaluation_semantic_accuracy": null,
+    "evaluation_precision": null,
+    "evaluation_recall": null,
+    "evaluation_f1": null,
+    "openai_usage_request_count": 81,
+    "openai_usage_input_tokens": 409938,
+    "openai_usage_output_tokens": 39501,
+    "openai_usage_total_tokens": 584993,
+    "openai_usage_cached_input_tokens": 0,
+    "openai_usage_reasoning_output_tokens": 0
+  }
+}

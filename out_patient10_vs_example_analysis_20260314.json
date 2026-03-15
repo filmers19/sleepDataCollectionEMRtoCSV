@@ -1,0 +1,2723 @@
+{
+  "reference": {
+    "patient_index": 10,
+    "name": "최보영",
+    "non_null_fields": 247
+  },
+  "runs": [
+    {
+      "run_label": "GPT54",
+      "run_dir": "/home/yhlee/human_workspace/0_research/dataCollection/out_patient10_frozenlatestocr_route_gpt54_map_gpt54_resolve_keyrun_20260314",
+      "total_fields": 692,
+      "reference_non_null_fields": 247,
+      "all_field_exact_matches": 678,
+      "all_field_exact_accuracy": 0.9798,
+      "reference_non_null_exact_matches": 234,
+      "reference_non_null_exact_accuracy": 0.9474,
+      "mismatch_count": 14,
+      "non_null_output_fields": 243,
+      "total_elapsed_seconds": 479.49750482593663,
+      "usage_by_model": {
+        "gpt-5.4": {
+          "requests": 54.0,
+          "input_tokens": 382088.0,
+          "output_tokens": 41694.0,
+          "total_tokens": 423782.0
+        }
+      },
+      "request_count": 54,
+      "input_tokens": 382088,
+      "output_tokens": 41694,
+      "total_tokens": 423782,
+      "cost_estimate_usd": 1.5806,
+      "cost_notes": [
+        "gpt-5.4: Assumes each request stayed at or below 272k input tokens."
+      ],
+      "mismatch_stage_counts": {
+        "map": 8,
+        "resolve": 3,
+        "output": 2,
+        "ocr": 1
+      },
+      "mismatch_category_counts": {
+        "table_subfield_omission": 4,
+        "extraction_gap": 1,
+        "document_conflict_chosen_differently": 2,
+        "formatting_or_minor_text_normalization": 2,
+        "wrong_conflict_resolution": 1,
+        "placeholder_overinterpreted_as_zero": 1,
+        "numeric_ocr_error": 1,
+        "questionnaire_split_omission": 1,
+        "time_field_split_error": 1
+      },
+      "mismatches": [
+        {
+          "field": "Arousal_LM_no",
+          "actual": "",
+          "expected": "5",
+          "other_run_actual": "",
+          "analysis": {
+            "stage": "map",
+            "category": "table_subfield_omission",
+            "cause": "The value exists in the PSG tables/leg-movement section, but this subfield was never emitted into provenance, so the mapper missed it entirely.",
+            "evidence": []
+          }
+        },
+        {
+          "field": "Arousal_PLM_idx_re",
+          "actual": "9.3",
+          "expected": "8.8",
+          "other_run_actual": "",
+          "analysis": {
+            "stage": "map",
+            "category": "extraction_gap",
+            "cause": "The field differs from the reference, but the available provenance does not isolate a narrower failure mode.",
+            "evidence": [
+              {
+                "page_id": "0002",
+                "run_ocr_chars": 2683,
+                "other_ocr_chars": 8,
+                "ocr_similarity_vs_other": 0.0059,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 18,
+                "other_valid_keys": 0
+              }
+            ]
+          }
+        },
+        {
+          "field": "Arousal_PLM_no",
+          "actual": "",
+          "expected": "54",
+          "other_run_actual": "",
+          "analysis": {
+            "stage": "map",
+            "category": "table_subfield_omission",
+            "cause": "The value exists in the PSG tables/leg-movement section, but this subfield was never emitted into provenance, so the mapper missed it entirely.",
+            "evidence": []
+          }
+        },
+        {
+          "field": "BMI",
+          "actual": "18.8",
+          "expected": "28.8",
+          "other_run_actual": "28.8",
+          "analysis": {
+            "stage": "resolve",
+            "category": "document_conflict_chosen_differently",
+            "cause": "The document contains competing candidates for this field, and the resolver selected a different value than the reference row.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 3572,
+                "other_ocr_chars": 323,
+                "ocr_similarity_vs_other": 0.154,
+                "run_route": "map_route_psg_report_extensive",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 47,
+                "other_valid_keys": 8
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2245,
+                "other_ocr_chars": 2309,
+                "ocr_similarity_vs_other": 0.5204,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 53,
+                "other_valid_keys": 11
+              },
+              {
+                "page_id": "0009",
+                "run_ocr_chars": 783,
+                "other_ocr_chars": 1084,
+                "ocr_similarity_vs_other": 0.7841,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 15,
+                "other_valid_keys": 10
+              }
+            ]
+          }
+        },
+        {
+          "field": "Diagnosis_etc",
+          "actual": "# Severe PLMS with moderate RLS # Moderate OSA with moderate snoring # Altered sleep structure with sleep maintenance difficulty # Mild depression",
+          "expected": "# Severe PLMS with moderate RLS # Moderate OSA with moderate snoring # Altered sleep structure with sleep maintanance difficulty # Mild depression",
+          "other_run_actual": "",
+          "analysis": {
+            "stage": "output",
+            "category": "formatting_or_minor_text_normalization",
+            "cause": "The extracted content is substantively the same, but exact-string comparison fails because of whitespace, punctuation, or a minor spelling variant.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 3572,
+                "other_ocr_chars": 323,
+                "ocr_similarity_vs_other": 0.154,
+                "run_route": "map_route_psg_report_extensive",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 47,
+                "other_valid_keys": 8
+              },
+              {
+                "page_id": "0002",
+                "run_ocr_chars": 2683,
+                "other_ocr_chars": 8,
+                "ocr_similarity_vs_other": 0.0059,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 18,
+                "other_valid_keys": 0
+              },
+              {
+                "page_id": "0005",
+                "run_ocr_chars": 369,
+                "other_ocr_chars": 468,
+                "ocr_similarity_vs_other": 0.6069,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 3,
+                "other_valid_keys": 2
+              }
+            ]
+          }
+        },
+        {
+          "field": "HI_REM",
+          "actual": "1.3",
+          "expected": "0",
+          "other_run_actual": "",
+          "analysis": {
+            "stage": "resolve",
+            "category": "wrong_conflict_resolution",
+            "cause": "Multiple candidate values were extracted, and the resolver chose a different source than the one that matches the reference row.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 3572,
+                "other_ocr_chars": 323,
+                "ocr_similarity_vs_other": 0.154,
+                "run_route": "map_route_psg_report_extensive",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 47,
+                "other_valid_keys": 8
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2245,
+                "other_ocr_chars": 2309,
+                "ocr_similarity_vs_other": 0.5204,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 53,
+                "other_valid_keys": 11
+              }
+            ]
+          }
+        },
+        {
+          "field": "NREM_lat_min",
+          "actual": "",
+          "expected": "252",
+          "other_run_actual": "",
+          "analysis": {
+            "stage": "map",
+            "category": "table_subfield_omission",
+            "cause": "The value exists in the PSG tables/leg-movement section, but this subfield was never emitted into provenance, so the mapper missed it entirely.",
+            "evidence": []
+          }
+        },
+        {
+          "field": "NREM_sup_min",
+          "actual": "",
+          "expected": "70",
+          "other_run_actual": "",
+          "analysis": {
+            "stage": "map",
+            "category": "table_subfield_omission",
+            "cause": "The value exists in the PSG tables/leg-movement section, but this subfield was never emitted into provenance, so the mapper missed it entirely.",
+            "evidence": []
+          }
+        },
+        {
+          "field": "N_Sleepattack",
+          "actual": "0",
+          "expected": "",
+          "other_run_actual": "",
+          "analysis": {
+            "stage": "map",
+            "category": "placeholder_overinterpreted_as_zero",
+            "cause": "The source form shows '-' for sleep attack, and the mapper converted that placeholder into 0 instead of leaving the field blank.",
+            "evidence": [
+              {
+                "page_id": "0009",
+                "run_ocr_chars": 783,
+                "other_ocr_chars": 1084,
+                "ocr_similarity_vs_other": 0.7841,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 15,
+                "other_valid_keys": 10
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSG_M_04_WakeNo",
+          "actual": "11",
+          "expected": "4",
+          "other_run_actual": "4",
+          "analysis": {
+            "stage": "ocr",
+            "category": "numeric_ocr_error",
+            "cause": "The morning questionnaire count was OCRed as a different integer, and the mapper faithfully carried that wrong number through.",
+            "evidence": [
+              {
+                "page_id": "0008",
+                "run_ocr_chars": 1266,
+                "other_ocr_chars": 1109,
+                "ocr_similarity_vs_other": 0.8034,
+                "run_route": "map_route_morning_questionnaire",
+                "other_route": "map_route_morning_questionnaire",
+                "run_valid_keys": 18,
+                "other_valid_keys": 18
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSG_M_05_Complaint",
+          "actual": "잠에서 깨어났지만 머리가 맑지 않고 자기 전보다 더 피곤함.",
+          "expected": "잠에서 깨어났지만 머리가 맑지 않고 자기 전보다 더 피곤함",
+          "other_run_actual": "잠에서 깨어났지만 머리가 맑지 않고 자기 전보다 더 피곤함.",
+          "analysis": {
+            "stage": "output",
+            "category": "formatting_or_minor_text_normalization",
+            "cause": "The extracted content is substantively the same, but exact-string comparison fails because of whitespace, punctuation, or a minor spelling variant.",
+            "evidence": [
+              {
+                "page_id": "0008",
+                "run_ocr_chars": 1266,
+                "other_ocr_chars": 1109,
+                "ocr_similarity_vs_other": 0.8034,
+                "run_route": "map_route_morning_questionnaire",
+                "other_route": "map_route_morning_questionnaire",
+                "run_valid_keys": 18,
+                "other_valid_keys": 18
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_02_Latency_HH",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0018",
+                "run_ocr_chars": 1344,
+                "other_ocr_chars": 1889,
+                "ocr_similarity_vs_other": 0.699,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 20,
+                "other_valid_keys": 11
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_02_Latency_MM",
+          "actual": "20",
+          "expected": "30",
+          "other_run_actual": "30",
+          "analysis": {
+            "stage": "map",
+            "category": "time_field_split_error",
+            "cause": "The model extracted the sleep-latency question but decomposed the HH/MM fields incorrectly.",
+            "evidence": [
+              {
+                "page_id": "0018",
+                "run_ocr_chars": 1344,
+                "other_ocr_chars": 1889,
+                "ocr_similarity_vs_other": 0.699,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 20,
+                "other_valid_keys": 11
+              }
+            ]
+          }
+        },
+        {
+          "field": "SQ_Wakefreq",
+          "actual": "7",
+          "expected": "3",
+          "other_run_actual": "3",
+          "analysis": {
+            "stage": "resolve",
+            "category": "document_conflict_chosen_differently",
+            "cause": "The document contains competing candidates for this field, and the resolver selected a different value than the reference row.",
+            "evidence": [
+              {
+                "page_id": "0012",
+                "run_ocr_chars": 1114,
+                "other_ocr_chars": 1212,
+                "ocr_similarity_vs_other": 0.8805,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 15,
+                "other_valid_keys": 2
+              },
+              {
+                "page_id": "0013",
+                "run_ocr_chars": 996,
+                "other_ocr_chars": 1004,
+                "ocr_similarity_vs_other": 0.772,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 6,
+                "other_valid_keys": 6
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "run_label": "Gemini31ProPreview",
+      "run_dir": "/home/yhlee/human_workspace/0_research/dataCollection/out_patient10_live_gemini31propreview_all_20260314",
+      "total_fields": 692,
+      "reference_non_null_fields": 247,
+      "all_field_exact_matches": 607,
+      "all_field_exact_accuracy": 0.8772,
+      "reference_non_null_exact_matches": 162,
+      "reference_non_null_exact_accuracy": 0.6559,
+      "mismatch_count": 85,
+      "non_null_output_fields": 173,
+      "total_elapsed_seconds": 1597.1460775570013,
+      "usage_by_model": {
+        "gemini-3.1-pro-preview": {
+          "requests": 81.0,
+          "input_tokens": 409938.0,
+          "output_tokens": 39501.0,
+          "total_tokens": 584993.0
+        }
+      },
+      "request_count": 81,
+      "input_tokens": 409938,
+      "output_tokens": 39501,
+      "total_tokens": 584993,
+      "cost_estimate_usd": 1.2939,
+      "cost_notes": [
+        "gemini-3.1-pro-preview: Uses <=200k prompt tier and excludes any hidden thinking tokens not surfaced in usage logs.",
+        "Usage log has 135554 extra tokens beyond input+output; cost estimate is a lower bound unless those tokens are broken out."
+      ],
+      "mismatch_stage_counts": {
+        "map": 71,
+        "ocr": 12,
+        "output": 2
+      },
+      "mismatch_category_counts": {
+        "map_omission": 44,
+        "upstream_ocr_loss": 2,
+        "table_subfield_omission": 4,
+        "extraction_gap": 3,
+        "checkbox_alignment_error": 9,
+        "metadata_assembly_gap": 1,
+        "numeric_ocr_error": 1,
+        "formatting_or_minor_text_normalization": 1,
+        "questionnaire_split_omission": 20
+      },
+      "mismatches": [
+        {
+          "field": "AHI_lat",
+          "actual": "",
+          "expected": "1.2",
+          "other_run_actual": "1.2",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AHI_lat_N1",
+          "actual": "",
+          "expected": "0.7",
+          "other_run_actual": "0.7",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AHI_lat_N2",
+          "actual": "",
+          "expected": "1.5",
+          "other_run_actual": "1.5",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AHI_lat_N3",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AHI_lat_NREM",
+          "actual": "",
+          "expected": "1.2",
+          "other_run_actual": "1.2",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AHI_lat_REM",
+          "actual": "",
+          "expected": "1.3",
+          "other_run_actual": "1.3",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AHI_sup",
+          "actual": "",
+          "expected": "3.4",
+          "other_run_actual": "3.4",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AHI_sup_N1",
+          "actual": "",
+          "expected": "5.3",
+          "other_run_actual": "5.3",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AHI_sup_N2",
+          "actual": "",
+          "expected": "1.7",
+          "other_run_actual": "1.7",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AHI_sup_N3",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AHI_sup_NREM",
+          "actual": "",
+          "expected": "3.4",
+          "other_run_actual": "3.4",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AHI_sup_REM",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AHI_total",
+          "actual": "",
+          "expected": "1.6",
+          "other_run_actual": "1.6",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AI_cent",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AI_cent_NREM",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AI_cent_REM",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AI_mix",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AI_mix_NREM",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AI_mix_REM",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AI_obs",
+          "actual": "",
+          "expected": "0.7",
+          "other_run_actual": "0.7",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AI_obs_NREM",
+          "actual": "",
+          "expected": "0.6",
+          "other_run_actual": "0.6",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "AI_obs_REM",
+          "actual": "",
+          "expected": "1.3",
+          "other_run_actual": "1.3",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "Arousal_LM_idx",
+          "actual": "",
+          "expected": "0.8",
+          "other_run_actual": "0.8",
+          "analysis": {
+            "stage": "ocr",
+            "category": "upstream_ocr_loss",
+            "cause": "The corresponding page OCR is much shorter or much less similar than the other run, so the downstream mapper never saw the needed content.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              }
+            ]
+          }
+        },
+        {
+          "field": "Arousal_LM_no",
+          "actual": "",
+          "expected": "5",
+          "other_run_actual": "",
+          "analysis": {
+            "stage": "map",
+            "category": "table_subfield_omission",
+            "cause": "The value exists in the PSG tables/leg-movement section, but this subfield was never emitted into provenance, so the mapper missed it entirely.",
+            "evidence": []
+          }
+        },
+        {
+          "field": "Arousal_PLM_idx",
+          "actual": "",
+          "expected": "9.3",
+          "other_run_actual": "9.3",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0002",
+                "run_ocr_chars": 8,
+                "other_ocr_chars": 2683,
+                "ocr_similarity_vs_other": 0.0059,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 0,
+                "other_valid_keys": 18
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "Arousal_PLM_idx_re",
+          "actual": "",
+          "expected": "8.8",
+          "other_run_actual": "9.3",
+          "analysis": {
+            "stage": "map",
+            "category": "extraction_gap",
+            "cause": "The field differs from the reference, but the available provenance does not isolate a narrower failure mode.",
+            "evidence": [
+              {
+                "page_id": "0002",
+                "run_ocr_chars": 8,
+                "other_ocr_chars": 2683,
+                "ocr_similarity_vs_other": 0.0059,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 0,
+                "other_valid_keys": 18
+              }
+            ]
+          }
+        },
+        {
+          "field": "Arousal_PLM_no",
+          "actual": "",
+          "expected": "54",
+          "other_run_actual": "",
+          "analysis": {
+            "stage": "map",
+            "category": "table_subfield_omission",
+            "cause": "The value exists in the PSG tables/leg-movement section, but this subfield was never emitted into provenance, so the mapper missed it entirely.",
+            "evidence": []
+          }
+        },
+        {
+          "field": "Arousal_idx",
+          "actual": "",
+          "expected": "28",
+          "other_run_actual": "28",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0002",
+                "run_ocr_chars": 8,
+                "other_ocr_chars": 2683,
+                "ocr_similarity_vs_other": 0.0059,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 0,
+                "other_valid_keys": 18
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "Arousal_resp_idx",
+          "actual": "",
+          "expected": "0.8",
+          "other_run_actual": "0.8",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0002",
+                "run_ocr_chars": 8,
+                "other_ocr_chars": 2683,
+                "ocr_similarity_vs_other": 0.0059,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 0,
+                "other_valid_keys": 18
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "Arousal_snoring_idx",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0002",
+                "run_ocr_chars": 8,
+                "other_ocr_chars": 2683,
+                "ocr_similarity_vs_other": 0.0059,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 0,
+                "other_valid_keys": 18
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "Arousal_spont_idx",
+          "actual": "",
+          "expected": "16.6",
+          "other_run_actual": "16.6",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0002",
+                "run_ocr_chars": 8,
+                "other_ocr_chars": 2683,
+                "ocr_similarity_vs_other": 0.0059,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 0,
+                "other_valid_keys": 18
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "BQ_01",
+          "actual": "2",
+          "expected": "3",
+          "other_run_actual": "3",
+          "analysis": {
+            "stage": "ocr",
+            "category": "checkbox_alignment_error",
+            "cause": "The Berlin Questionnaire OCR preserved the page, but checkbox positions drifted enough to shift selected options before mapping.",
+            "evidence": [
+              {
+                "page_id": "0015",
+                "run_ocr_chars": 799,
+                "other_ocr_chars": 787,
+                "ocr_similarity_vs_other": 0.7617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 10,
+                "other_valid_keys": 10
+              }
+            ]
+          }
+        },
+        {
+          "field": "BQ_02",
+          "actual": "2",
+          "expected": "3",
+          "other_run_actual": "3",
+          "analysis": {
+            "stage": "ocr",
+            "category": "checkbox_alignment_error",
+            "cause": "The Berlin Questionnaire OCR preserved the page, but checkbox positions drifted enough to shift selected options before mapping.",
+            "evidence": [
+              {
+                "page_id": "0015",
+                "run_ocr_chars": 799,
+                "other_ocr_chars": 787,
+                "ocr_similarity_vs_other": 0.7617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 10,
+                "other_valid_keys": 10
+              }
+            ]
+          }
+        },
+        {
+          "field": "BQ_03",
+          "actual": "1",
+          "expected": "2",
+          "other_run_actual": "2",
+          "analysis": {
+            "stage": "ocr",
+            "category": "checkbox_alignment_error",
+            "cause": "The Berlin Questionnaire OCR preserved the page, but checkbox positions drifted enough to shift selected options before mapping.",
+            "evidence": [
+              {
+                "page_id": "0015",
+                "run_ocr_chars": 799,
+                "other_ocr_chars": 787,
+                "ocr_similarity_vs_other": 0.7617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 10,
+                "other_valid_keys": 10
+              }
+            ]
+          }
+        },
+        {
+          "field": "BQ_04",
+          "actual": "3",
+          "expected": "4",
+          "other_run_actual": "4",
+          "analysis": {
+            "stage": "ocr",
+            "category": "checkbox_alignment_error",
+            "cause": "The Berlin Questionnaire OCR preserved the page, but checkbox positions drifted enough to shift selected options before mapping.",
+            "evidence": [
+              {
+                "page_id": "0015",
+                "run_ocr_chars": 799,
+                "other_ocr_chars": 787,
+                "ocr_similarity_vs_other": 0.7617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 10,
+                "other_valid_keys": 10
+              }
+            ]
+          }
+        },
+        {
+          "field": "BQ_05",
+          "actual": "1",
+          "expected": "2",
+          "other_run_actual": "2",
+          "analysis": {
+            "stage": "ocr",
+            "category": "checkbox_alignment_error",
+            "cause": "The Berlin Questionnaire OCR preserved the page, but checkbox positions drifted enough to shift selected options before mapping.",
+            "evidence": [
+              {
+                "page_id": "0015",
+                "run_ocr_chars": 799,
+                "other_ocr_chars": 787,
+                "ocr_similarity_vs_other": 0.7617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 10,
+                "other_valid_keys": 10
+              }
+            ]
+          }
+        },
+        {
+          "field": "BQ_07",
+          "actual": "1",
+          "expected": "2",
+          "other_run_actual": "2",
+          "analysis": {
+            "stage": "ocr",
+            "category": "checkbox_alignment_error",
+            "cause": "The Berlin Questionnaire OCR preserved the page, but checkbox positions drifted enough to shift selected options before mapping.",
+            "evidence": [
+              {
+                "page_id": "0015",
+                "run_ocr_chars": 799,
+                "other_ocr_chars": 787,
+                "ocr_similarity_vs_other": 0.7617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 10,
+                "other_valid_keys": 10
+              }
+            ]
+          }
+        },
+        {
+          "field": "BQ_08",
+          "actual": "1",
+          "expected": "2",
+          "other_run_actual": "2",
+          "analysis": {
+            "stage": "ocr",
+            "category": "checkbox_alignment_error",
+            "cause": "The Berlin Questionnaire OCR preserved the page, but checkbox positions drifted enough to shift selected options before mapping.",
+            "evidence": [
+              {
+                "page_id": "0015",
+                "run_ocr_chars": 799,
+                "other_ocr_chars": 787,
+                "ocr_similarity_vs_other": 0.7617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 10,
+                "other_valid_keys": 10
+              }
+            ]
+          }
+        },
+        {
+          "field": "BQ_09",
+          "actual": "1",
+          "expected": "2",
+          "other_run_actual": "2",
+          "analysis": {
+            "stage": "ocr",
+            "category": "checkbox_alignment_error",
+            "cause": "The Berlin Questionnaire OCR preserved the page, but checkbox positions drifted enough to shift selected options before mapping.",
+            "evidence": [
+              {
+                "page_id": "0015",
+                "run_ocr_chars": 799,
+                "other_ocr_chars": 787,
+                "ocr_similarity_vs_other": 0.7617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 10,
+                "other_valid_keys": 10
+              }
+            ]
+          }
+        },
+        {
+          "field": "BQ_10",
+          "actual": "1",
+          "expected": "2",
+          "other_run_actual": "2",
+          "analysis": {
+            "stage": "ocr",
+            "category": "checkbox_alignment_error",
+            "cause": "The Berlin Questionnaire OCR preserved the page, but checkbox positions drifted enough to shift selected options before mapping.",
+            "evidence": [
+              {
+                "page_id": "0015",
+                "run_ocr_chars": 799,
+                "other_ocr_chars": 787,
+                "ocr_similarity_vs_other": 0.7617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 10,
+                "other_valid_keys": 10
+              }
+            ]
+          }
+        },
+        {
+          "field": "Database_ID",
+          "actual": "",
+          "expected": "001_20140612_137_P",
+          "other_run_actual": "001_20140612_137_P",
+          "analysis": {
+            "stage": "output",
+            "category": "metadata_assembly_gap",
+            "cause": "No provenance exists for this field; GPT populated it while the Gemini run left the metadata field blank.",
+            "evidence": []
+          }
+        },
+        {
+          "field": "Diagnosis_etc",
+          "actual": "",
+          "expected": "# Severe PLMS with moderate RLS # Moderate OSA with moderate snoring # Altered sleep structure with sleep maintanance difficulty # Mild depression",
+          "other_run_actual": "# Severe PLMS with moderate RLS # Moderate OSA with moderate snoring # Altered sleep structure with sleep maintenance difficulty # Mild depression",
+          "analysis": {
+            "stage": "map",
+            "category": "extraction_gap",
+            "cause": "The field differs from the reference, but the available provenance does not isolate a narrower failure mode.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0002",
+                "run_ocr_chars": 8,
+                "other_ocr_chars": 2683,
+                "ocr_similarity_vs_other": 0.0059,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 0,
+                "other_valid_keys": 18
+              },
+              {
+                "page_id": "0005",
+                "run_ocr_chars": 468,
+                "other_ocr_chars": 369,
+                "ocr_similarity_vs_other": 0.5854,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 2,
+                "other_valid_keys": 3
+              }
+            ]
+          }
+        },
+        {
+          "field": "FSS_07",
+          "actual": "",
+          "expected": "5",
+          "other_run_actual": "5",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The source page is present and routed, but this field never made it into the mapped output.",
+            "evidence": [
+              {
+                "page_id": "0014",
+                "run_ocr_chars": 1687,
+                "other_ocr_chars": 1258,
+                "ocr_similarity_vs_other": 0.834,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 15,
+                "other_valid_keys": 18
+              }
+            ]
+          }
+        },
+        {
+          "field": "FSS_08",
+          "actual": "",
+          "expected": "6",
+          "other_run_actual": "6",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The source page is present and routed, but this field never made it into the mapped output.",
+            "evidence": [
+              {
+                "page_id": "0014",
+                "run_ocr_chars": 1687,
+                "other_ocr_chars": 1258,
+                "ocr_similarity_vs_other": 0.834,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 15,
+                "other_valid_keys": 18
+              }
+            ]
+          }
+        },
+        {
+          "field": "FSS_09",
+          "actual": "",
+          "expected": "6",
+          "other_run_actual": "6",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The source page is present and routed, but this field never made it into the mapped output.",
+            "evidence": [
+              {
+                "page_id": "0014",
+                "run_ocr_chars": 1687,
+                "other_ocr_chars": 1258,
+                "ocr_similarity_vs_other": 0.834,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 15,
+                "other_valid_keys": 18
+              }
+            ]
+          }
+        },
+        {
+          "field": "HI",
+          "actual": "",
+          "expected": "1",
+          "other_run_actual": "1",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "HI_NREM",
+          "actual": "",
+          "expected": "1.1",
+          "other_run_actual": "1.1",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "HI_REM",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "1.3",
+          "analysis": {
+            "stage": "map",
+            "category": "extraction_gap",
+            "cause": "The field differs from the reference, but the available provenance does not isolate a narrower failure mode.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "LM_idx",
+          "actual": "",
+          "expected": "2.9",
+          "other_run_actual": "2.9",
+          "analysis": {
+            "stage": "ocr",
+            "category": "upstream_ocr_loss",
+            "cause": "The corresponding page OCR is much shorter or much less similar than the other run, so the downstream mapper never saw the needed content.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              }
+            ]
+          }
+        },
+        {
+          "field": "N1_pct",
+          "actual": "",
+          "expected": "33.3",
+          "other_run_actual": "33.3",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "N2_pct",
+          "actual": "",
+          "expected": "54.2",
+          "other_run_actual": "54.2",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "N3_pct",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "NREM_lat_min",
+          "actual": "",
+          "expected": "252",
+          "other_run_actual": "",
+          "analysis": {
+            "stage": "map",
+            "category": "table_subfield_omission",
+            "cause": "The value exists in the PSG tables/leg-movement section, but this subfield was never emitted into provenance, so the mapper missed it entirely.",
+            "evidence": []
+          }
+        },
+        {
+          "field": "NREM_sup_min",
+          "actual": "",
+          "expected": "70",
+          "other_run_actual": "",
+          "analysis": {
+            "stage": "map",
+            "category": "table_subfield_omission",
+            "cause": "The value exists in the PSG tables/leg-movement section, but this subfield was never emitted into provenance, so the mapper missed it entirely.",
+            "evidence": []
+          }
+        },
+        {
+          "field": "Nap_Freq",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0012",
+                "run_ocr_chars": 1212,
+                "other_ocr_chars": 1114,
+                "ocr_similarity_vs_other": 0.4617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 2,
+                "other_valid_keys": 15
+              }
+            ]
+          }
+        },
+        {
+          "field": "Neckcir_cm",
+          "actual": "37",
+          "expected": "32",
+          "other_run_actual": "32",
+          "analysis": {
+            "stage": "ocr",
+            "category": "numeric_ocr_error",
+            "cause": "A numeric field was misread in OCR, producing the wrong candidate value before mapping or resolution.",
+            "evidence": [
+              {
+                "page_id": "0009",
+                "run_ocr_chars": 1084,
+                "other_ocr_chars": 783,
+                "ocr_similarity_vs_other": 0.7724,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 10,
+                "other_valid_keys": 15
+              }
+            ]
+          }
+        },
+        {
+          "field": "PLM_idx",
+          "actual": "",
+          "expected": "52.5",
+          "other_run_actual": "52.5",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0002",
+                "run_ocr_chars": 8,
+                "other_ocr_chars": 2683,
+                "ocr_similarity_vs_other": 0.0059,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 0,
+                "other_valid_keys": 18
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSG_M_05_Complaint",
+          "actual": "잠에서 깨어났지만 머리가 맑지 않고 자기 전보다 더 피곤함.",
+          "expected": "잠에서 깨어났지만 머리가 맑지 않고 자기 전보다 더 피곤함",
+          "other_run_actual": "잠에서 깨어났지만 머리가 맑지 않고 자기 전보다 더 피곤함.",
+          "analysis": {
+            "stage": "output",
+            "category": "formatting_or_minor_text_normalization",
+            "cause": "The extracted content is substantively the same, but exact-string comparison fails because of whitespace, punctuation, or a minor spelling variant.",
+            "evidence": [
+              {
+                "page_id": "0008",
+                "run_ocr_chars": 1109,
+                "other_ocr_chars": 1266,
+                "ocr_similarity_vs_other": 0.8286,
+                "run_route": "map_route_morning_questionnaire",
+                "other_route": "map_route_morning_questionnaire",
+                "run_valid_keys": 18,
+                "other_valid_keys": 18
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_01_BedIn_HH_free",
+          "actual": "",
+          "expected": "23",
+          "other_run_actual": "23",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0012",
+                "run_ocr_chars": 1212,
+                "other_ocr_chars": 1114,
+                "ocr_similarity_vs_other": 0.4617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 2,
+                "other_valid_keys": 15
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_01_BedIn_MM_free",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0012",
+                "run_ocr_chars": 1212,
+                "other_ocr_chars": 1114,
+                "ocr_similarity_vs_other": 0.4617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 2,
+                "other_valid_keys": 15
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_03_BedOut_HH_free",
+          "actual": "",
+          "expected": "7",
+          "other_run_actual": "7",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0012",
+                "run_ocr_chars": 1212,
+                "other_ocr_chars": 1114,
+                "ocr_similarity_vs_other": 0.4617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 2,
+                "other_valid_keys": 15
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_03_BedOut_HH_week",
+          "actual": "",
+          "expected": "6",
+          "other_run_actual": "6",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0012",
+                "run_ocr_chars": 1212,
+                "other_ocr_chars": 1114,
+                "ocr_similarity_vs_other": 0.4617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 2,
+                "other_valid_keys": 15
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_03_BedOut_MM_free",
+          "actual": "",
+          "expected": "30",
+          "other_run_actual": "30",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0012",
+                "run_ocr_chars": 1212,
+                "other_ocr_chars": 1114,
+                "ocr_similarity_vs_other": 0.4617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 2,
+                "other_valid_keys": 15
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_03_BedOut_MM_week",
+          "actual": "",
+          "expected": "30",
+          "other_run_actual": "30",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0012",
+                "run_ocr_chars": 1212,
+                "other_ocr_chars": 1114,
+                "ocr_similarity_vs_other": 0.4617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 2,
+                "other_valid_keys": 15
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_04_SD_HH_free",
+          "actual": "",
+          "expected": "7",
+          "other_run_actual": "7",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0012",
+                "run_ocr_chars": 1212,
+                "other_ocr_chars": 1114,
+                "ocr_similarity_vs_other": 0.4617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 2,
+                "other_valid_keys": 15
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_04_SD_HH_week",
+          "actual": "",
+          "expected": "6",
+          "other_run_actual": "6",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0012",
+                "run_ocr_chars": 1212,
+                "other_ocr_chars": 1114,
+                "ocr_similarity_vs_other": 0.4617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 2,
+                "other_valid_keys": 15
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_04_SD_MM_free",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0012",
+                "run_ocr_chars": 1212,
+                "other_ocr_chars": 1114,
+                "ocr_similarity_vs_other": 0.4617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 2,
+                "other_valid_keys": 15
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_04_SD_MM_week",
+          "actual": "",
+          "expected": "30",
+          "other_run_actual": "30",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0012",
+                "run_ocr_chars": 1212,
+                "other_ocr_chars": 1114,
+                "ocr_similarity_vs_other": 0.4617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 2,
+                "other_valid_keys": 15
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_05_d",
+          "actual": "",
+          "expected": "3",
+          "other_run_actual": "3",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0018",
+                "run_ocr_chars": 1889,
+                "other_ocr_chars": 1344,
+                "ocr_similarity_vs_other": 0.6409,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 11,
+                "other_valid_keys": 20
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_05_e",
+          "actual": "",
+          "expected": "1",
+          "other_run_actual": "1",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0018",
+                "run_ocr_chars": 1889,
+                "other_ocr_chars": 1344,
+                "ocr_similarity_vs_other": 0.6409,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 11,
+                "other_valid_keys": 20
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_05_f",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0018",
+                "run_ocr_chars": 1889,
+                "other_ocr_chars": 1344,
+                "ocr_similarity_vs_other": 0.6409,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 11,
+                "other_valid_keys": 20
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_05_g",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0018",
+                "run_ocr_chars": 1889,
+                "other_ocr_chars": 1344,
+                "ocr_similarity_vs_other": 0.6409,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 11,
+                "other_valid_keys": 20
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_05_h",
+          "actual": "",
+          "expected": "2",
+          "other_run_actual": "2",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0018",
+                "run_ocr_chars": 1889,
+                "other_ocr_chars": 1344,
+                "ocr_similarity_vs_other": 0.6409,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 11,
+                "other_valid_keys": 20
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_05_i",
+          "actual": "",
+          "expected": "1",
+          "other_run_actual": "1",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0018",
+                "run_ocr_chars": 1889,
+                "other_ocr_chars": 1344,
+                "ocr_similarity_vs_other": 0.6409,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 11,
+                "other_valid_keys": 20
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_06",
+          "actual": "",
+          "expected": "2",
+          "other_run_actual": "2",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0018",
+                "run_ocr_chars": 1889,
+                "other_ocr_chars": 1344,
+                "ocr_similarity_vs_other": 0.6409,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 11,
+                "other_valid_keys": 20
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_07",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0018",
+                "run_ocr_chars": 1889,
+                "other_ocr_chars": 1344,
+                "ocr_similarity_vs_other": 0.6409,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 11,
+                "other_valid_keys": 20
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_08",
+          "actual": "",
+          "expected": "1",
+          "other_run_actual": "1",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0018",
+                "run_ocr_chars": 1889,
+                "other_ocr_chars": 1344,
+                "ocr_similarity_vs_other": 0.6409,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 11,
+                "other_valid_keys": 20
+              }
+            ]
+          }
+        },
+        {
+          "field": "PSQI_09",
+          "actual": "",
+          "expected": "2",
+          "other_run_actual": "2",
+          "analysis": {
+            "stage": "map",
+            "category": "questionnaire_split_omission",
+            "cause": "The questionnaire OCR page is present, but the mapper only emitted part of the PSQI structure and dropped the rest of the split fields.",
+            "evidence": [
+              {
+                "page_id": "0018",
+                "run_ocr_chars": 1889,
+                "other_ocr_chars": 1344,
+                "ocr_similarity_vs_other": 0.6409,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 11,
+                "other_valid_keys": 20
+              }
+            ]
+          }
+        },
+        {
+          "field": "RDI_idx",
+          "actual": "",
+          "expected": "1.8",
+          "other_run_actual": "1.8",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0002",
+                "run_ocr_chars": 8,
+                "other_ocr_chars": 2683,
+                "ocr_similarity_vs_other": 0.0059,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 0,
+                "other_valid_keys": 18
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "RDI_no",
+          "actual": "",
+          "expected": "11",
+          "other_run_actual": "11",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "REM_lat_min",
+          "actual": "",
+          "expected": "46",
+          "other_run_actual": "46",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "REM_pct",
+          "actual": "",
+          "expected": "12.5",
+          "other_run_actual": "12.5",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "REM_sup_min",
+          "actual": "",
+          "expected": "0",
+          "other_run_actual": "0",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        },
+        {
+          "field": "SQ_Satisfaction",
+          "actual": "",
+          "expected": "1",
+          "other_run_actual": "1",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0012",
+                "run_ocr_chars": 1212,
+                "other_ocr_chars": 1114,
+                "ocr_similarity_vs_other": 0.4617,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 2,
+                "other_valid_keys": 15
+              },
+              {
+                "page_id": "0019",
+                "run_ocr_chars": 1118,
+                "other_ocr_chars": 949,
+                "ocr_similarity_vs_other": 0.6551,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_night_questionnaire",
+                "run_valid_keys": 4,
+                "other_valid_keys": 5
+              }
+            ]
+          }
+        },
+        {
+          "field": "WASO_pct",
+          "actual": "",
+          "expected": "12.3",
+          "other_run_actual": "12.3",
+          "analysis": {
+            "stage": "map",
+            "category": "map_omission",
+            "cause": "The OCR page is present and comparable, but this run mapped far fewer keys from it than the other run, so the field was dropped during mapping.",
+            "evidence": [
+              {
+                "page_id": "0001",
+                "run_ocr_chars": 323,
+                "other_ocr_chars": 3572,
+                "ocr_similarity_vs_other": 0.152,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_extensive",
+                "run_valid_keys": 8,
+                "other_valid_keys": 47
+              },
+              {
+                "page_id": "0002",
+                "run_ocr_chars": 8,
+                "other_ocr_chars": 2683,
+                "ocr_similarity_vs_other": 0.0059,
+                "run_route": "map_route_night_questionnaire",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 0,
+                "other_valid_keys": 18
+              },
+              {
+                "page_id": "0006",
+                "run_ocr_chars": 2309,
+                "other_ocr_chars": 2245,
+                "ocr_similarity_vs_other": 0.5582,
+                "run_route": "map_route_psg_report_general",
+                "other_route": "map_route_psg_report_general",
+                "run_valid_keys": 11,
+                "other_valid_keys": 53
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

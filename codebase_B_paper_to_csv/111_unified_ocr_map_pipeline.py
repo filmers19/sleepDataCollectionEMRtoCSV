@@ -13,15 +13,25 @@ import threading
 import time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple, Union
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
 import pandas as pd
+from rate_limit_utils import (
+    RateLimiterRegistry,
+    estimate_text_tokens,
+    load_rate_limit_overrides,
+    normalize_headers,
+    parse_retry_after_seconds,
+    resolve_model_rate_limit_config,
+    summarize_usage_records,
+)
 
 logger = logging.getLogger("unified_ocr_map")
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
+RATE_LIMITER_REGISTRY = RateLimiterRegistry()
 
 
 def resolve_script_path(path_str: str) -> Path:
@@ -89,6 +99,11 @@ class TextAgent(Protocol):
     async def atext(self, system_prompt: str, user_text: str, label: str = "") -> str: ...
 
 
+def parse_model_id_list(raw: str) -> List[str]:
+    parts = [p.strip() for p in str(raw or "").split(",")]
+    return [p for p in parts if p]
+
+
 class RemoteOpenAIResponsesTextAgent:
     def __init__(
         self,
@@ -100,6 +115,7 @@ class RemoteOpenAIResponsesTextAgent:
         timeout_sec: float,
         max_retries: int,
         api_key_env: str,
+        rate_limiter: Any = None,
     ) -> None:
         self.model_id = model_id
         self.max_new_tokens = max(1, int(max_new_tokens))
@@ -108,6 +124,7 @@ class RemoteOpenAIResponsesTextAgent:
         self.timeout_sec = max(5.0, float(timeout_sec))
         self.max_retries = max(0, int(max_retries))
         self.api_key_env = str(api_key_env or "OPENAI_API_KEY").strip() or "OPENAI_API_KEY"
+        self._rate_limiter = rate_limiter
         self._sem = asyncio.Semaphore(max(1, int(max_inflight)))
         self._usage_lock = threading.Lock()
         self._usage_records: List[Dict[str, Any]] = []
@@ -138,10 +155,22 @@ class RemoteOpenAIResponsesTextAgent:
             "reasoning_output_tokens": RemoteOpenAIResponsesTextAgent._coerce_int(output_details.get("reasoning_tokens")),
         }
 
-    def _record_usage(self, payload: Dict[str, Any], label: str) -> None:
+    def _record_usage(
+        self,
+        payload: Dict[str, Any],
+        label: str,
+        request_id: str,
+        started_at: float,
+        rate_limit_meta: Optional[Dict[str, Any]],
+    ) -> None:
         usage = self._extract_usage(payload)
         usage["label"] = str(label or "").strip() or "text"
         usage["model"] = self.model_id
+        usage["request_id"] = request_id
+        usage["started_at"] = started_at
+        usage["finished_at"] = time.time()
+        if rate_limit_meta:
+            usage.update(rate_limit_meta)
         with self._usage_lock:
             self._usage_records.append(usage)
 
@@ -173,13 +202,19 @@ class RemoteOpenAIResponsesTextAgent:
             return "\n".join(texts).strip()
         raise RuntimeError("OpenAI response did not contain text")
 
-    def _http_json(self, req: urlrequest.Request) -> Dict[str, Any]:
+    def _http_json(self, req: urlrequest.Request) -> Tuple[Dict[str, Any], Dict[str, str]]:
         with urlrequest.urlopen(req, timeout=self.timeout_sec) as resp:
             raw = resp.read()
-        return json.loads(raw.decode("utf-8"))
+            headers = normalize_headers(resp.headers)
+        return json.loads(raw.decode("utf-8")), headers
 
     def _text_sync(self, system_prompt: str, user_text: str, label: str) -> str:
         api_key = self._read_api_key()
+        estimated_tokens = estimate_text_tokens(system_prompt, user_text) + self.max_new_tokens
+        started_at = time.time()
+        request_id = ""
+        if self._rate_limiter is not None:
+            request_id = self._rate_limiter.acquire(estimated_tokens=estimated_tokens, label=label)
         payload: Dict[str, Any] = {
             "model": self.model_id,
             "input": [
@@ -211,16 +246,37 @@ class RemoteOpenAIResponsesTextAgent:
         delay = 2.0
         for attempt in range(self.max_retries + 1):
             try:
-                resp_payload = self._http_json(req)
-                self._record_usage(resp_payload, label)
+                resp_payload, headers = self._http_json(req)
+                rate_limit_meta = None
+                if self._rate_limiter is not None and request_id:
+                    rate_limit_meta = self._rate_limiter.release(
+                        request_id,
+                        actual_tokens=int((resp_payload.get("usage") or {}).get("total_tokens") or 0),
+                        headers=headers,
+                        status="ok",
+                    )
+                self._record_usage(resp_payload, label, request_id, started_at, rate_limit_meta)
                 return self._extract_text(resp_payload)
             except urlerror.HTTPError as exc:
                 body = ""
+                headers = normalize_headers(getattr(exc, "headers", None))
                 try:
                     body = exc.read().decode("utf-8", errors="replace")
                 except Exception:
                     body = str(exc)
+                if self._rate_limiter is not None and request_id:
+                    self._rate_limiter.release(
+                        request_id,
+                        actual_tokens=None,
+                        headers=headers,
+                        status=f"http_{exc.code}",
+                        error=body[:500],
+                    )
+                    request_id = ""
                 if exc.code in {408, 429, 500, 502, 503, 504} and attempt < self.max_retries:
+                    retry_after = parse_retry_after_seconds(headers, body)
+                    if retry_after is not None:
+                        delay = max(delay, retry_after)
                     logger.warning(
                         "Transient OpenAI text error (status=%s, attempt=%d/%d). Retrying in %.1fs.",
                         exc.code,
@@ -230,9 +286,19 @@ class RemoteOpenAIResponsesTextAgent:
                     )
                     time.sleep(delay)
                     delay *= 2.0
+                    if self._rate_limiter is not None:
+                        request_id = self._rate_limiter.acquire(estimated_tokens=estimated_tokens, label=label)
                     continue
                 raise RuntimeError(f"OpenAI text request failed: status={exc.code} body={body}") from exc
             except Exception:
+                if self._rate_limiter is not None and request_id:
+                    self._rate_limiter.release(
+                        request_id,
+                        actual_tokens=None,
+                        status="exception",
+                        error="local_exception",
+                    )
+                    request_id = ""
                 if attempt < self.max_retries:
                     logger.warning(
                         "Transient OpenAI text failure (attempt=%d/%d). Retrying in %.1fs.",
@@ -242,6 +308,8 @@ class RemoteOpenAIResponsesTextAgent:
                     )
                     time.sleep(delay)
                     delay *= 2.0
+                    if self._rate_limiter is not None:
+                        request_id = self._rate_limiter.acquire(estimated_tokens=estimated_tokens, label=label)
                     continue
                 raise
         raise RuntimeError("OpenAI text request failed after retries")
@@ -262,6 +330,7 @@ class RemoteGeminiTextAgent:
         timeout_sec: float,
         max_retries: int,
         api_key_env: str,
+        rate_limiter: Any = None,
     ) -> None:
         self.model_id = model_id
         self.max_new_tokens = max(1, int(max_new_tokens))
@@ -270,7 +339,10 @@ class RemoteGeminiTextAgent:
         self.timeout_sec = max(5.0, float(timeout_sec))
         self.max_retries = max(0, int(max_retries))
         self.api_key_env = str(api_key_env or "GOOGLE_API_KEY").strip() or "GOOGLE_API_KEY"
+        self._rate_limiter = rate_limiter
         self._sem = asyncio.Semaphore(max(1, int(max_inflight)))
+        self._usage_lock = threading.Lock()
+        self._usage_records: List[Dict[str, Any]] = []
 
     def _read_api_key(self) -> str:
         api_key = os.getenv(self.api_key_env, "").strip()
@@ -291,13 +363,56 @@ class RemoteGeminiTextAgent:
             return "\n".join(texts).strip()
         raise RuntimeError("Gemini response did not contain text")
 
-    def _http_json(self, req: urlrequest.Request) -> Dict[str, Any]:
+    @staticmethod
+    def _extract_usage(payload: Dict[str, Any]) -> Dict[str, Any]:
+        usage = payload.get("usageMetadata") or {}
+        input_tokens = int(usage.get("promptTokenCount") or 0)
+        output_tokens = int(usage.get("candidatesTokenCount") or 0)
+        total_tokens = int(usage.get("totalTokenCount") or (input_tokens + output_tokens))
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "cached_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+        }
+
+    def usage_records(self) -> List[Dict[str, Any]]:
+        with self._usage_lock:
+            return [dict(item) for item in self._usage_records]
+
+    def _record_usage(
+        self,
+        payload: Dict[str, Any],
+        label: str,
+        request_id: str,
+        started_at: float,
+        rate_limit_meta: Optional[Dict[str, Any]],
+    ) -> None:
+        usage = self._extract_usage(payload)
+        usage["label"] = str(label or "").strip() or "text"
+        usage["model"] = self.model_id
+        usage["request_id"] = request_id
+        usage["started_at"] = started_at
+        usage["finished_at"] = time.time()
+        if rate_limit_meta:
+            usage.update(rate_limit_meta)
+        with self._usage_lock:
+            self._usage_records.append(usage)
+
+    def _http_json(self, req: urlrequest.Request) -> Tuple[Dict[str, Any], Dict[str, str]]:
         with urlrequest.urlopen(req, timeout=self.timeout_sec) as resp:
             raw = resp.read()
-        return json.loads(raw.decode("utf-8"))
+            headers = normalize_headers(resp.headers)
+        return json.loads(raw.decode("utf-8")), headers
 
-    def _text_sync(self, system_prompt: str, user_text: str) -> str:
+    def _text_sync(self, system_prompt: str, user_text: str, label: str) -> str:
         api_key = self._read_api_key()
+        estimated_tokens = estimate_text_tokens(system_prompt, user_text) + self.max_new_tokens
+        started_at = time.time()
+        request_id = ""
+        if self._rate_limiter is not None:
+            request_id = self._rate_limiter.acquire(estimated_tokens=estimated_tokens, label=label)
         payload: Dict[str, Any] = {
             "systemInstruction": {"parts": [{"text": system_prompt}]},
             "contents": [{"role": "user", "parts": [{"text": user_text}]}],
@@ -317,14 +432,37 @@ class RemoteGeminiTextAgent:
         delay = 2.0
         for attempt in range(self.max_retries + 1):
             try:
-                return self._extract_text(self._http_json(req))
+                resp_payload, headers = self._http_json(req)
+                rate_limit_meta = None
+                if self._rate_limiter is not None and request_id:
+                    rate_limit_meta = self._rate_limiter.release(
+                        request_id,
+                        actual_tokens=int((resp_payload.get("usageMetadata") or {}).get("totalTokenCount") or 0),
+                        headers=headers,
+                        status="ok",
+                    )
+                self._record_usage(resp_payload, label, request_id, started_at, rate_limit_meta)
+                return self._extract_text(resp_payload)
             except urlerror.HTTPError as exc:
                 body = ""
+                headers = normalize_headers(getattr(exc, "headers", None))
                 try:
                     body = exc.read().decode("utf-8", errors="replace")
                 except Exception:
                     body = str(exc)
+                if self._rate_limiter is not None and request_id:
+                    self._rate_limiter.release(
+                        request_id,
+                        actual_tokens=None,
+                        headers=headers,
+                        status=f"http_{exc.code}",
+                        error=body[:500],
+                    )
+                    request_id = ""
                 if exc.code in {408, 429, 500, 502, 503, 504} and attempt < self.max_retries:
+                    retry_after = parse_retry_after_seconds(headers, body)
+                    if retry_after is not None:
+                        delay = max(delay, retry_after)
                     logger.warning(
                         "Transient Gemini text error (status=%s, attempt=%d/%d). Retrying in %.1fs.",
                         exc.code,
@@ -334,9 +472,19 @@ class RemoteGeminiTextAgent:
                     )
                     time.sleep(delay)
                     delay *= 2.0
+                    if self._rate_limiter is not None:
+                        request_id = self._rate_limiter.acquire(estimated_tokens=estimated_tokens, label=label)
                     continue
                 raise RuntimeError(f"Gemini text request failed: status={exc.code} body={body}") from exc
             except Exception:
+                if self._rate_limiter is not None and request_id:
+                    self._rate_limiter.release(
+                        request_id,
+                        actual_tokens=None,
+                        status="exception",
+                        error="local_exception",
+                    )
+                    request_id = ""
                 if attempt < self.max_retries:
                     logger.warning(
                         "Transient Gemini text failure (attempt=%d/%d). Retrying in %.1fs.",
@@ -346,13 +494,15 @@ class RemoteGeminiTextAgent:
                     )
                     time.sleep(delay)
                     delay *= 2.0
+                    if self._rate_limiter is not None:
+                        request_id = self._rate_limiter.acquire(estimated_tokens=estimated_tokens, label=label)
                     continue
                 raise
         raise RuntimeError("Gemini text request failed after retries")
 
     async def atext(self, system_prompt: str, user_text: str, label: str = "") -> str:
         async with self._sem:
-            return await asyncio.to_thread(self._text_sync, system_prompt, user_text)
+            return await asyncio.to_thread(self._text_sync, system_prompt, user_text, label)
 
 
 class LocalHFTextAgent:
@@ -530,6 +680,17 @@ def summarize_openai_usage(*agents: Optional[TextAgent]) -> Dict[str, Any]:
     if not records:
         return {}
 
+    deduped: List[Dict[str, Any]] = []
+    seen_requests = set()
+    for rec in records:
+        request_id = str(rec.get("request_id") or "")
+        if request_id and request_id in seen_requests:
+            continue
+        if request_id:
+            seen_requests.add(request_id)
+        deduped.append(rec)
+    records = deduped
+
     by_label: Dict[str, Dict[str, Any]] = {}
     for rec in records:
         label = str(rec.get("label") or "text")
@@ -561,6 +722,19 @@ def summarize_openai_usage(*agents: Optional[TextAgent]) -> Dict[str, Any]:
         "records": records,
     }
     return summary
+
+
+def collect_usage_records(*agents: Optional[TextAgent]) -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
+    seen_agent_ids = set()
+    for agent in agents:
+        if agent is None or id(agent) in seen_agent_ids:
+            continue
+        seen_agent_ids.add(id(agent))
+        getter = getattr(agent, "usage_records", None)
+        if callable(getter):
+            records.extend(getter())
+    return records
 
 
 def _extract_json_dict(pipeline_mod: Any, raw_text: str) -> Dict[str, Any]:
@@ -651,10 +825,38 @@ async def text_to_json(
 
 def build_map_schema_hint() -> str:
     return (
-        '{"CDM_KEY": {"value": <scalar>, '
-        '"input_context": {"filled_by": "doctor|patient|unknown", '
-        '"question": "<text>", "page": "<summary>"}}}'
+        '{"CDM_KEY": {"CDM_Context": "<cdm context>", "value": <value>, '
+        '"input_context": {"filled_by": "doctor|patient", '
+        '"question": "<exact question/context that matches to the CDM key>"}}}'
     )
+
+
+def build_route_schema_hint() -> str:
+    return '{"route":"<route>","confidence":"high|medium|low","reason":"<short reason>"}'
+
+
+async def route_ocr_text(
+    llm: TextAgent,
+    pipeline_mod: Any,
+    ocr_text: str,
+    max_attempts: int,
+) -> Dict[str, Any]:
+    try:
+        raw = await text_to_json(
+            llm=llm,
+            system_prompt=pipeline_mod.MAP_ROUTE_SYSTEM,
+            user_text=pipeline_mod.build_route_user_prompt(ocr_text),
+            pipeline_mod=pipeline_mod,
+            schema_hint=build_route_schema_hint(),
+            max_attempts=max_attempts,
+            label="map_route",
+        )
+        return pipeline_mod.normalize_route_decision(raw, ocr_text)
+    except Exception as exc:
+        fallback = pipeline_mod.classify_map_route_heuristic(ocr_text)
+        fallback["reason"] = f"heuristic_fallback_after_route_error:{type(exc).__name__}"
+        logger.warning("Route classifier failed, falling back to heuristic router: %s", exc)
+        return fallback
 
 
 async def map_to_json(
@@ -662,12 +864,13 @@ async def map_to_json(
     pipeline_mod: Any,
     ocr_text: str,
     candidates_block: str,
+    route_name: str,
     max_attempts: int,
 ) -> Dict[str, Any]:
     return await text_to_json(
         llm=llm,
         system_prompt=pipeline_mod.MAP_SYSTEM,
-        user_text=pipeline_mod.build_map_user_prompt(ocr_text, candidates_block),
+        user_text=pipeline_mod.build_map_user_prompt(ocr_text, candidates_block, route_name=route_name),
         pipeline_mod=pipeline_mod,
         schema_hint=build_map_schema_hint(),
         max_attempts=max_attempts,
@@ -681,12 +884,13 @@ async def map_recall_to_json(
     ocr_text: str,
     candidates_block: str,
     existing_json: Dict[str, Any],
+    route_name: str,
     max_attempts: int,
 ) -> Dict[str, Any]:
     return await text_to_json(
         llm=llm,
         system_prompt=pipeline_mod.MAP_RECALL_SYSTEM,
-        user_text=pipeline_mod.build_map_recall_user_prompt(ocr_text, candidates_block, existing_json),
+        user_text=pipeline_mod.build_map_recall_user_prompt(ocr_text, candidates_block, existing_json, route_name=route_name),
         pipeline_mod=pipeline_mod,
         schema_hint=build_map_schema_hint(),
         max_attempts=max_attempts,
@@ -701,13 +905,23 @@ def apply_core_backfill_to_stage(
     stage_raw: Dict[str, Any],
     stage_valid: Dict[str, Any],
     stage_contexts: Dict[str, Dict[str, str]],
+    stage_cdm_contexts: Dict[str, str],
     stage_rejected: Dict[str, Dict[str, Any]],
 ) -> None:
     backfill_additions, backfill_rejected = pipeline_mod.apply_core_backfill(stage_valid, retriever, ocr_text)
     for key, value in backfill_additions.items():
         stage_valid[key] = value
-        stage_contexts.setdefault(key, {"filled_by": "unknown", "question": "Derived from OCR header pattern"})
-        stage_raw.setdefault(key, {"value": value, "input_context": stage_contexts[key]})
+        stage_contexts.setdefault(key, {"filled_by": "", "question": "Derived from OCR header pattern", "page_type": ""})
+        row = retriever.row_by_key.get(key)
+        stage_cdm_contexts.setdefault(key, str(row.desc if row is not None else "").strip())
+        stage_raw.setdefault(
+            key,
+            {
+                "CDM_Context": stage_cdm_contexts[key],
+                "value": value,
+                "input_context": stage_contexts[key],
+            },
+        )
     for key, meta in backfill_rejected.items():
         stage_rejected.setdefault(key, meta)
 
@@ -717,47 +931,59 @@ async def map_ocr_text_single_agent(
     pipeline_mod: Any,
     retriever: Any,
     ocr_text: str,
+    route_name: str,
     json_retry_attempts: int,
     enable_recall: bool,
-) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, str]], Dict[str, Dict[str, Any]]]:
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, str]], Dict[str, str], Dict[str, Dict[str, Any]]]:
     stage_raw: Dict[str, Any] = {}
     stage_valid: Dict[str, Any] = {}
     stage_contexts: Dict[str, Dict[str, str]] = {}
+    stage_cdm_contexts: Dict[str, str] = {}
     stage_rejected: Dict[str, Dict[str, Any]] = {}
+    route_name = str(route_name or pipeline_mod.DEFAULT_MAP_ROUTE)
+    candidates_block = retriever.prompt_block_for_route(route_name)
+    ocr_chunks = pipeline_mod.split_ocr_text_for_map_route(ocr_text, route_name)
 
-    raw = await map_to_json(
-        llm=llm,
-        pipeline_mod=pipeline_mod,
-        ocr_text=ocr_text,
-        candidates_block=retriever.full_cdm_prompt_block(),
-        max_attempts=json_retry_attempts,
-    )
-    pipeline_mod.merge_map_payload_into_stage(
-        retriever=retriever,
-        ocr_text=ocr_text,
-        raw_payload=raw,
-        stage_raw=stage_raw,
-        stage_valid=stage_valid,
-        stage_contexts=stage_contexts,
-        stage_rejected=stage_rejected,
-    )
+    for ocr_chunk in ocr_chunks:
+        raw = await map_to_json(
+            llm=llm,
+            pipeline_mod=pipeline_mod,
+            ocr_text=ocr_chunk,
+            candidates_block=candidates_block,
+            route_name=route_name,
+            max_attempts=json_retry_attempts,
+        )
+        pipeline_mod.merge_map_payload_into_stage(
+            retriever=retriever,
+            ocr_text=ocr_chunk,
+            raw_payload=raw,
+            route_name=route_name,
+            stage_raw=stage_raw,
+            stage_valid=stage_valid,
+            stage_contexts=stage_contexts,
+            stage_cdm_contexts=stage_cdm_contexts,
+            stage_rejected=stage_rejected,
+        )
 
     if enable_recall and pipeline_mod.should_run_recall_pass(ocr_text, stage_valid):
         recall_raw = await map_recall_to_json(
             llm=llm,
             pipeline_mod=pipeline_mod,
             ocr_text=ocr_text,
-            candidates_block=retriever.full_cdm_prompt_block(),
+            candidates_block=candidates_block,
             existing_json=stage_valid,
+            route_name=route_name,
             max_attempts=json_retry_attempts,
         )
         pipeline_mod.merge_map_payload_into_stage(
             retriever=retriever,
             ocr_text=ocr_text,
             raw_payload=recall_raw,
+            route_name=route_name,
             stage_raw=stage_raw,
             stage_valid=stage_valid,
             stage_contexts=stage_contexts,
+            stage_cdm_contexts=stage_cdm_contexts,
             stage_rejected=stage_rejected,
         )
 
@@ -768,27 +994,48 @@ async def map_ocr_text_single_agent(
         stage_raw=stage_raw,
         stage_valid=stage_valid,
         stage_contexts=stage_contexts,
+        stage_cdm_contexts=stage_cdm_contexts,
         stage_rejected=stage_rejected,
     )
-    return stage_raw, stage_valid, stage_contexts, stage_rejected
+    return stage_raw, stage_valid, stage_contexts, stage_cdm_contexts, stage_rejected
+
+
+def _resolve_agent_backends(
+    llm: Union[TextAgent, Sequence[TextAgent]],
+    n_agents: int,
+) -> List[TextAgent]:
+    if isinstance(llm, Sequence) and not isinstance(llm, (str, bytes)):
+        items = [item for item in llm if item is not None]
+        if not items:
+            raise ValueError("No map backends configured")
+        if len(items) == 1:
+            return [items[0] for _ in range(max(1, int(n_agents)))]
+        out: List[TextAgent] = []
+        for idx in range(max(1, int(n_agents))):
+            out.append(items[idx % len(items)])
+        return out
+    return [llm for _ in range(max(1, int(n_agents)))]
 
 
 async def map_ocr_text_multi_agent(
-    llm: TextAgent,
+    llm: Union[TextAgent, Sequence[TextAgent]],
     pipeline_mod: Any,
     retriever: Any,
     ocr_text: str,
     map_agent_count: int,
+    route_name: str,
     json_retry_attempts: int,
     enable_recall: bool,
-) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, str]], Dict[str, Dict[str, Any]]]:
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, str]], Dict[str, str], Dict[str, Dict[str, Any]]]:
     n_agents = max(1, int(map_agent_count))
+    agent_backends = _resolve_agent_backends(llm, n_agents=n_agents)
     if n_agents <= 1:
         return await map_ocr_text_single_agent(
-            llm=llm,
+            llm=agent_backends[0],
             pipeline_mod=pipeline_mod,
             retriever=retriever,
             ocr_text=ocr_text,
+            route_name=route_name,
             json_retry_attempts=json_retry_attempts,
             enable_recall=enable_recall,
         )
@@ -796,48 +1043,65 @@ async def map_ocr_text_multi_agent(
     stage_raw: Dict[str, Any] = {}
     stage_valid: Dict[str, Any] = {}
     stage_contexts: Dict[str, Dict[str, str]] = {}
+    stage_cdm_contexts: Dict[str, str] = {}
     stage_rejected: Dict[str, Dict[str, Any]] = {}
-    map_agents = pipeline_mod.build_map_agent_specs(retriever, n_agents)
+    route_name = str(route_name or pipeline_mod.DEFAULT_MAP_ROUTE)
+    map_agents = pipeline_mod.build_map_agent_specs(retriever, n_agents, route_name=route_name)
+    ocr_chunks = pipeline_mod.split_ocr_text_for_map_route(ocr_text, route_name)
 
-    async def _call(agent: Any) -> Tuple[Any, Dict[str, Any]]:
+    async def _call(agent: Any, agent_backend: TextAgent, ocr_chunk: str) -> Tuple[Any, str, Dict[str, Any]]:
         payload = await map_to_json(
-            llm=llm,
+            llm=agent_backend,
             pipeline_mod=pipeline_mod,
-            ocr_text=ocr_text,
+            ocr_text=ocr_chunk,
             candidates_block=agent.candidates_block,
+            route_name=agent.route_name,
             max_attempts=json_retry_attempts,
         )
-        return agent, payload
+        return agent, ocr_chunk, payload
 
-    outs = await asyncio.gather(*[_call(agent) for agent in map_agents], return_exceptions=True)
+    outs = await asyncio.gather(
+        *[
+            _call(agent, agent_backends[agent_idx], ocr_chunk)
+            for ocr_chunk in ocr_chunks
+            for agent_idx, agent in enumerate(map_agents)
+        ],
+        return_exceptions=True,
+    )
     for out in outs:
         if isinstance(out, Exception):
             logger.warning("Split map agent call failed: %s", out)
             continue
-        _, payload = out
+        _, ocr_chunk, payload = out
         pipeline_mod.merge_map_payload_into_stage(
             retriever=retriever,
-            ocr_text=ocr_text,
+            ocr_text=ocr_chunk,
             raw_payload=payload,
+            route_name=route_name,
             stage_raw=stage_raw,
             stage_valid=stage_valid,
             stage_contexts=stage_contexts,
+            stage_cdm_contexts=stage_cdm_contexts,
             stage_rejected=stage_rejected,
         )
 
     if enable_recall and pipeline_mod.should_run_recall_pass(ocr_text, stage_valid):
-        async def _recall(agent: Any) -> Tuple[Any, Dict[str, Any]]:
+        async def _recall(agent: Any, agent_backend: TextAgent) -> Tuple[Any, Dict[str, Any]]:
             payload = await map_recall_to_json(
-                llm=llm,
+                llm=agent_backend,
                 pipeline_mod=pipeline_mod,
                 ocr_text=ocr_text,
                 candidates_block=agent.candidates_block,
                 existing_json=stage_valid,
+                route_name=agent.route_name,
                 max_attempts=json_retry_attempts,
             )
             return agent, payload
 
-        recall_outs = await asyncio.gather(*[_recall(agent) for agent in map_agents], return_exceptions=True)
+        recall_outs = await asyncio.gather(
+            *[_recall(agent, agent_backends[agent_idx]) for agent_idx, agent in enumerate(map_agents)],
+            return_exceptions=True,
+        )
         for out in recall_outs:
             if isinstance(out, Exception):
                 logger.warning("Split map recall agent call failed: %s", out)
@@ -847,9 +1111,11 @@ async def map_ocr_text_multi_agent(
                 retriever=retriever,
                 ocr_text=ocr_text,
                 raw_payload=payload,
+                route_name=route_name,
                 stage_raw=stage_raw,
                 stage_valid=stage_valid,
                 stage_contexts=stage_contexts,
+                stage_cdm_contexts=stage_cdm_contexts,
                 stage_rejected=stage_rejected,
             )
 
@@ -860,9 +1126,10 @@ async def map_ocr_text_multi_agent(
         stage_raw=stage_raw,
         stage_valid=stage_valid,
         stage_contexts=stage_contexts,
+        stage_cdm_contexts=stage_cdm_contexts,
         stage_rejected=stage_rejected,
     )
-    return stage_raw, stage_valid, stage_contexts, stage_rejected
+    return stage_raw, stage_valid, stage_contexts, stage_cdm_contexts, stage_rejected
 
 
 async def resolve_single_conflict(
@@ -913,10 +1180,25 @@ async def resolve_conflicts(
     if not conflicts:
         return {}, {}
 
+    overrides: Dict[str, Any] = {}
+    decisions: Dict[str, Any] = {}
+    pending_conflicts: Dict[str, List[Dict[str, Any]]] = conflicts
+    if hasattr(pipeline_mod, "resolve_conflicts_by_majority_vote"):
+        try:
+            code_overrides, code_decisions, pending_conflicts, _ = pipeline_mod.resolve_conflicts_by_majority_vote(conflicts)
+            overrides.update(code_overrides)
+            decisions.update(code_decisions)
+        except Exception as exc:
+            logger.warning("Code majority conflict pre-resolver failed for %s: %s", patient_name, exc)
+            pending_conflicts = conflicts
+
+    if not pending_conflicts:
+        return overrides, decisions
+
     user = pipeline_mod.build_conflict_resolver_user_prompt(
         patient_name=patient_name,
         retriever=retriever,
-        conflicts=conflicts,
+        conflicts=pending_conflicts,
     )
     try:
         raw = await text_to_json(
@@ -932,10 +1214,8 @@ async def resolve_conflicts(
     except Exception:
         resolved_obj = None
 
-    overrides: Dict[str, Any] = {}
-    decisions: Dict[str, Any] = {}
     if isinstance(resolved_obj, dict):
-        for key, entries in conflicts.items():
+        for key, entries in pending_conflicts.items():
             item = resolved_obj.get(key)
             if not isinstance(item, dict):
                 continue
@@ -950,9 +1230,10 @@ async def resolve_conflicts(
                 "reason": str(item.get("reason", "")).strip(),
                 "source_image": chosen.get("image"),
                 "input_context": pipeline_mod._normalize_input_context(chosen.get("input_context")),
+                "resolver_mode": "llm_batch",
             }
 
-    pending = [key for key in conflicts.keys() if key not in overrides]
+    pending = [key for key in pending_conflicts.keys() if key not in overrides]
     for key in pending:
         try:
             resolved = await resolve_single_conflict(
@@ -961,7 +1242,7 @@ async def resolve_conflicts(
                 retriever=retriever,
                 patient_name=patient_name,
                 key=key,
-                entries=conflicts[key],
+                entries=pending_conflicts[key],
                 json_retry_attempts=json_retry_attempts,
             )
         except Exception as exc:
@@ -970,7 +1251,7 @@ async def resolve_conflicts(
         if resolved is None:
             continue
         idx, reason = resolved
-        chosen = conflicts[key][idx]
+        chosen = pending_conflicts[key][idx]
         overrides[key] = chosen.get("value")
         decisions[key] = {
             "chosen_index": idx,
@@ -978,6 +1259,7 @@ async def resolve_conflicts(
             "reason": reason,
             "source_image": chosen.get("image"),
             "input_context": pipeline_mod._normalize_input_context(chosen.get("input_context")),
+            "resolver_mode": "llm_single",
         }
     return overrides, decisions
 
@@ -1005,9 +1287,25 @@ def build_text_backend(
     dtype: str,
     attn_implementation: str,
     disable_trust_remote_code: bool,
+    rate_limit_overrides: Optional[Dict[str, Any]] = None,
+    rate_limit_window_sec: float = 60.0,
+    rate_limit_margin: float = 0.9,
 ) -> TextAgent:
     backend_name = resolve_text_backend_name(model_id)
     if backend_name == "openai":
+        limiter = RATE_LIMITER_REGISTRY.get(
+            provider="openai",
+            model_id=model_id,
+            config=resolve_model_rate_limit_config(
+                rate_limit_overrides or {},
+                provider="openai",
+                model_id=model_id,
+                default_window_sec=rate_limit_window_sec,
+                default_margin=rate_limit_margin,
+            ),
+            default_window_sec=rate_limit_window_sec,
+            default_margin=rate_limit_margin,
+        )
         return RemoteOpenAIResponsesTextAgent(
             model_id=model_id,
             max_new_tokens=max_new_tokens,
@@ -1017,8 +1315,22 @@ def build_text_backend(
             timeout_sec=timeout_sec,
             max_retries=max_retries,
             api_key_env=openai_api_key_env,
+            rate_limiter=limiter,
         )
     if backend_name == "gemini":
+        limiter = RATE_LIMITER_REGISTRY.get(
+            provider="gemini",
+            model_id=model_id,
+            config=resolve_model_rate_limit_config(
+                rate_limit_overrides or {},
+                provider="gemini",
+                model_id=model_id,
+                default_window_sec=rate_limit_window_sec,
+                default_margin=rate_limit_margin,
+            ),
+            default_window_sec=rate_limit_window_sec,
+            default_margin=rate_limit_margin,
+        )
         return RemoteGeminiTextAgent(
             model_id=model_id,
             max_new_tokens=max_new_tokens,
@@ -1028,6 +1340,7 @@ def build_text_backend(
             timeout_sec=timeout_sec,
             max_retries=max_retries,
             api_key_env=gemini_api_key_env,
+            rate_limiter=limiter,
         )
     return LocalHFTextAgent(
         model_id=model_id,
@@ -1044,6 +1357,19 @@ def build_text_backend(
 def build_ocr_backend(args: argparse.Namespace, ocr_mod: Any) -> Any:
     backend_name = ocr_mod.resolve_backend_name(args.ocr_model_id)
     if backend_name == "openai_responses":
+        limiter = RATE_LIMITER_REGISTRY.get(
+            provider="openai",
+            model_id=args.ocr_model_id,
+            config=resolve_model_rate_limit_config(
+                getattr(args, "rate_limit_overrides", {}) or {},
+                provider="openai",
+                model_id=args.ocr_model_id,
+                default_window_sec=args.rate_limit_window_sec,
+                default_margin=args.rate_limit_margin,
+            ),
+            default_window_sec=args.rate_limit_window_sec,
+            default_margin=args.rate_limit_margin,
+        )
         return ocr_mod.RemoteOpenAIResponsesOCR(
             model_id=args.ocr_model_id,
             max_new_tokens=args.ocr_max_new_tokens,
@@ -1054,8 +1380,22 @@ def build_ocr_backend(args: argparse.Namespace, ocr_mod: Any) -> Any:
             max_retries=args.max_retries,
             api_key_env=args.openai_api_key_env,
             image_max_side=args.image_max_side,
+            rate_limiter=limiter,
         )
     if backend_name == "gemini_api":
+        limiter = RATE_LIMITER_REGISTRY.get(
+            provider="gemini",
+            model_id=args.ocr_model_id,
+            config=resolve_model_rate_limit_config(
+                getattr(args, "rate_limit_overrides", {}) or {},
+                provider="gemini",
+                model_id=args.ocr_model_id,
+                default_window_sec=args.rate_limit_window_sec,
+                default_margin=args.rate_limit_margin,
+            ),
+            default_window_sec=args.rate_limit_window_sec,
+            default_margin=args.rate_limit_margin,
+        )
         return ocr_mod.RemoteGeminiOCR(
             model_id=args.ocr_model_id,
             max_new_tokens=args.ocr_max_new_tokens,
@@ -1066,6 +1406,7 @@ def build_ocr_backend(args: argparse.Namespace, ocr_mod: Any) -> Any:
             max_retries=args.max_retries,
             api_key_env=args.gemini_api_key_env,
             image_max_side=args.image_max_side,
+            rate_limiter=limiter,
         )
     if backend_name == "deepseek_vl2":
         return ocr_mod.LocalDeepSeekVLV2OCR(
@@ -1290,6 +1631,7 @@ async def maybe_warm_backend(backend: Any) -> None:
 async def run(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir).resolve()
     configure_logging(output_dir=output_dir, debug=args.debug)
+    args.rate_limit_overrides = load_rate_limit_overrides(args.rate_limits_json, args.rate_limits_file)
 
     pipeline_mod = load_module(resolve_script_path(args.pipeline_script), "paper_to_cdm_sa_unified")
     ocr_mod = load_module(resolve_script_path(args.ocr_script), "ocr_only_unified")
@@ -1314,8 +1656,36 @@ async def run(args: argparse.Namespace) -> None:
         map_page_dir.mkdir(parents=True, exist_ok=True)
     prepared_image_dir = (output_dir / "prepared_images") if args.auto_rotate_landscape else None
 
+    map_agent_count = max(1, int(args.map_agent_count))
+    requested_map_agent_model_ids = parse_model_id_list(args.map_agent_model_ids)
+    if requested_map_agent_model_ids:
+        if len(requested_map_agent_model_ids) == 1:
+            map_agent_model_ids = requested_map_agent_model_ids * map_agent_count
+        elif len(requested_map_agent_model_ids) == map_agent_count:
+            map_agent_model_ids = requested_map_agent_model_ids
+        else:
+            raise ValueError(
+                "--map_agent_model_ids length must be 1 or match --map_agent_count. "
+                f"Got {len(requested_map_agent_model_ids)} vs {map_agent_count}."
+            )
+    else:
+        map_agent_model_ids = [str(args.map_model_id)] * map_agent_count
+
+    route_model_id = str(args.route_model_id or "").strip() or str(args.map_model_id)
     resolver_model_id = str(args.resolver_model_id or "").strip() or str(args.map_model_id)
-    resolver_backend_kind = "shared_map_backend" if resolver_model_id == args.map_model_id else resolve_text_backend_name(resolver_model_id)
+    map_backend_kind_by_model = {
+        model_id: resolve_text_backend_name(model_id) for model_id in sorted(set(map_agent_model_ids))
+    }
+    route_backend_kind = (
+        "shared_map_backend"
+        if route_model_id in map_backend_kind_by_model
+        else resolve_text_backend_name(route_model_id)
+    )
+    resolver_backend_kind = (
+        "shared_map_backend"
+        if resolver_model_id in map_backend_kind_by_model
+        else resolve_text_backend_name(resolver_model_id)
+    )
     plan = {
         "patient_name": patient_name,
         "patient_dir": str(patient_dir) if patient_dir is not None else "",
@@ -1326,18 +1696,25 @@ async def run(args: argparse.Namespace) -> None:
         "reuse_ocr_dir": str(reuse_ocr_dir) if reuse_ocr_dir is not None else "",
         "ocr_model_id": args.ocr_model_id,
         "ocr_backend": ocr_mod.resolve_backend_name(args.ocr_model_id) if not reuse_ocr_dir else "reused_frozen_ocr",
+        "route_model_id": route_model_id,
+        "route_backend": route_backend_kind,
         "map_model_id": args.map_model_id,
         "map_backend": resolve_text_backend_name(args.map_model_id),
+        "map_agent_model_ids": map_agent_model_ids,
+        "map_agent_backend_by_model": map_backend_kind_by_model,
         "resolver_model_id": resolver_model_id,
         "resolver_backend": resolver_backend_kind,
         "map_bundle_size": max(1, int(args.map_bundle_size)),
-        "map_agent_count": max(1, int(args.map_agent_count)),
+        "map_agent_count": map_agent_count,
         "enable_recall": bool(args.enable_recall),
         "disable_conflict_resolver": bool(args.disable_conflict_resolver or args.pipeline_mode != "ocr_map_resolve"),
         "map_json_retry_attempts": max(1, int(args.map_json_retry_attempts)),
         "resolver_json_retry_attempts": max(1, int(args.resolver_json_retry_attempts)),
         "images_total": len(images),
         "duplicates_dropped": len(duplicates),
+        "rate_limit_window_sec": float(args.rate_limit_window_sec),
+        "rate_limit_margin": float(args.rate_limit_margin),
+        "rate_limit_overrides": args.rate_limit_overrides,
     }
     write_plan(output_dir, plan)
     logger.info("Plan: %s", json.dumps(plan, ensure_ascii=False))
@@ -1349,28 +1726,62 @@ async def run(args: argparse.Namespace) -> None:
     else:
         ocr_backend = None
 
-    map_backend = build_text_backend(
-        model_id=args.map_model_id,
-        max_new_tokens=args.map_max_new_tokens,
-        temperature=args.map_temperature,
-        top_p=args.map_top_p,
-        max_inflight=args.map_concurrency,
-        timeout_sec=args.request_timeout_sec,
-        max_retries=args.max_retries,
-        openai_api_key_env=args.openai_api_key_env,
-        gemini_api_key_env=args.gemini_api_key_env,
-        dtype=args.dtype,
-        attn_implementation=args.attn_implementation,
-        disable_trust_remote_code=args.disable_trust_remote_code,
-    )
+    map_backends_by_model: Dict[str, TextAgent] = {}
+    for model_id in sorted(set(map_agent_model_ids)):
+        map_backends_by_model[model_id] = build_text_backend(
+            model_id=model_id,
+            max_new_tokens=args.map_max_new_tokens,
+            temperature=args.map_temperature,
+            top_p=args.map_top_p,
+            max_inflight=args.map_concurrency,
+            timeout_sec=args.request_timeout_sec,
+            max_retries=args.max_retries,
+            openai_api_key_env=args.openai_api_key_env,
+            gemini_api_key_env=args.gemini_api_key_env,
+            dtype=args.dtype,
+            attn_implementation=args.attn_implementation,
+            disable_trust_remote_code=args.disable_trust_remote_code,
+            rate_limit_overrides=args.rate_limit_overrides,
+            rate_limit_window_sec=args.rate_limit_window_sec,
+            rate_limit_margin=args.rate_limit_margin,
+        )
+    map_agent_backends = [map_backends_by_model[mid] for mid in map_agent_model_ids]
+    map_backend = map_agent_backends[0]
     if args.preload_map_model:
-        await maybe_warm_backend(map_backend)
+        for backend in sorted(set(map_agent_backends), key=id):
+            await maybe_warm_backend(backend)
+
+    route_backend: TextAgent
+    if route_model_id in map_backends_by_model:
+        route_backend = map_backends_by_model[route_model_id]
+    else:
+        route_backend = build_text_backend(
+            model_id=route_model_id,
+            max_new_tokens=args.route_max_new_tokens,
+            temperature=args.route_temperature,
+            top_p=args.route_top_p,
+            max_inflight=args.map_concurrency,
+            timeout_sec=args.request_timeout_sec,
+            max_retries=args.max_retries,
+            openai_api_key_env=args.openai_api_key_env,
+            gemini_api_key_env=args.gemini_api_key_env,
+            dtype=args.dtype,
+            attn_implementation=args.attn_implementation,
+            disable_trust_remote_code=args.disable_trust_remote_code,
+            rate_limit_overrides=args.rate_limit_overrides,
+            rate_limit_window_sec=args.rate_limit_window_sec,
+            rate_limit_margin=args.rate_limit_margin,
+        )
+        if args.preload_map_model:
+            await maybe_warm_backend(route_backend)
 
     conflict_backend: Optional[TextAgent]
     if args.disable_conflict_resolver or args.pipeline_mode != "ocr_map_resolve":
         conflict_backend = None
-    elif resolver_model_id == args.map_model_id:
-        conflict_backend = map_backend
+    elif resolver_model_id in map_backends_by_model:
+        conflict_backend = map_backends_by_model[resolver_model_id]
+    elif resolver_model_id == route_model_id:
+        conflict_backend = route_backend
     else:
         conflict_backend = build_text_backend(
             model_id=resolver_model_id,
@@ -1385,6 +1796,9 @@ async def run(args: argparse.Namespace) -> None:
             dtype=args.dtype,
             attn_implementation=args.attn_implementation,
             disable_trust_remote_code=args.disable_trust_remote_code,
+            rate_limit_overrides=args.rate_limit_overrides,
+            rate_limit_window_sec=args.rate_limit_window_sec,
+            rate_limit_margin=args.rate_limit_margin,
         )
         if args.preload_map_model:
             await maybe_warm_backend(conflict_backend)
@@ -1510,12 +1924,19 @@ async def run(args: argparse.Namespace) -> None:
 
             t0 = time.perf_counter()
             try:
-                raw_obj, valid_obj, valid_contexts, rejected_fields = await map_ocr_text_multi_agent(
-                    llm=map_backend,
+                route_info = await route_ocr_text(
+                    llm=route_backend,
+                    pipeline_mod=pipeline_mod,
+                    ocr_text=merged_text,
+                    max_attempts=max(1, min(2, int(args.map_json_retry_attempts))),
+                )
+                raw_obj, valid_obj, valid_contexts, valid_cdm_contexts, rejected_fields = await map_ocr_text_multi_agent(
+                    llm=map_agent_backends,
                     pipeline_mod=pipeline_mod,
                     retriever=retriever,
                     ocr_text=merged_text,
-                    map_agent_count=args.map_agent_count,
+                    map_agent_count=map_agent_count,
+                    route_name=str(route_info.get("route") or pipeline_mod.DEFAULT_MAP_ROUTE),
                     json_retry_attempts=args.map_json_retry_attempts,
                     enable_recall=args.enable_recall,
                 )
@@ -1526,6 +1947,7 @@ async def run(args: argparse.Namespace) -> None:
                         raw_json=raw_obj,
                         valid_json=valid_obj,
                         input_contexts=valid_contexts,
+                        cdm_contexts=valid_cdm_contexts,
                         rejected_fields=rejected_fields,
                     )
                 )
@@ -1538,7 +1960,17 @@ async def run(args: argparse.Namespace) -> None:
                     encoding="utf-8",
                 )
                 (map_page_dir / f"{Path(bundle_name).stem}.contexts.json").write_text(
-                    json.dumps(valid_contexts, ensure_ascii=False, indent=2),
+                    json.dumps(
+                        {
+                            k: {
+                                "CDM_Context": valid_cdm_contexts.get(k, ""),
+                                "input_context": valid_contexts.get(k, {}),
+                            }
+                            for k in valid_obj.keys()
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
                     encoding="utf-8",
                 )
                 if rejected_fields:
@@ -1550,32 +1982,40 @@ async def run(args: argparse.Namespace) -> None:
                 valid_count = len(valid_obj)
                 error = ""
             except Exception as exc:
+                route_info = pipeline_mod.classify_map_route_heuristic(merged_text)
                 ok = False
                 valid_count = 0
                 error = f"{type(exc).__name__}: {exc}"
                 page_errors.append({"image": bundle_name, "error_type": type(exc).__name__, "error": str(exc)})
 
-            meta = {
-                "bundle": bundle_name,
-                "source_images": image_names,
-                "ok": ok,
-                "elapsed_seconds": time.perf_counter() - t0,
-                "valid_keys": valid_count,
-                "error": error,
-            }
-            (map_page_dir / f"{Path(bundle_name).stem}.meta.json").write_text(
-                json.dumps(meta, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            logger.info(
-                "MAP %d/%d | %s | ok=%s | elapsed=%.1fs | valid_keys=%d",
-                idx,
-                len(bundles),
-                bundle_name,
-                ok,
-                meta["elapsed_seconds"],
-                valid_count,
-            )
+        meta = {
+            "bundle": bundle_name,
+            "source_images": image_names,
+            "map_route": route_info.get("route"),
+            "map_route_confidence": route_info.get("confidence"),
+            "map_route_report_score": route_info.get("report_score"),
+            "map_route_extensive_report_score": route_info.get("extensive_report_score"),
+            "map_route_morning_score": route_info.get("morning_score"),
+            "map_route_night_score": route_info.get("night_score"),
+            "map_route_reason": route_info.get("reason"),
+            "ok": ok,
+            "elapsed_seconds": time.perf_counter() - t0,
+            "valid_keys": valid_count,
+            "error": error,
+        }
+        (map_page_dir / f"{Path(bundle_name).stem}.meta.json").write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logger.info(
+            "MAP %d/%d | %s | ok=%s | elapsed=%.1fs | valid_keys=%d",
+            idx,
+            len(bundles),
+            bundle_name,
+            ok,
+            meta["elapsed_seconds"],
+            valid_count,
+        )
 
     map_tasks = [asyncio.create_task(_map_one(i, bundle)) for i, bundle in enumerate(bundles, start=1)]
     for fut in asyncio.as_completed(map_tasks):
@@ -1633,22 +2073,32 @@ async def run(args: argparse.Namespace) -> None:
     )
 
     ocr_usage_summary = summarize_openai_usage(ocr_backend) if ocr_backend is not None else {}
-    map_usage_summary = summarize_openai_usage(map_backend, conflict_backend)
+    route_usage_summary = summarize_openai_usage(route_backend)
+    map_usage_summary = summarize_openai_usage(*map_agent_backends)
+    resolver_usage_summary = summarize_openai_usage(conflict_backend)
+    unique_usage_records = collect_usage_records(ocr_backend, route_backend, *map_agent_backends, conflict_backend)
+    rate_limit_usage_summary = summarize_usage_records(unique_usage_records)
     combined_usage_summary = {
         "ocr": ocr_usage_summary,
-        "map_and_resolver": map_usage_summary,
+        "route": route_usage_summary,
+        "map": map_usage_summary,
+        "resolver": resolver_usage_summary,
         "totals": {
-            "request_count": int(ocr_usage_summary.get("request_count") or 0) + int(map_usage_summary.get("request_count") or 0),
-            "input_tokens": int(ocr_usage_summary.get("input_tokens") or 0) + int(map_usage_summary.get("input_tokens") or 0),
-            "output_tokens": int(ocr_usage_summary.get("output_tokens") or 0) + int(map_usage_summary.get("output_tokens") or 0),
-            "total_tokens": int(ocr_usage_summary.get("total_tokens") or 0) + int(map_usage_summary.get("total_tokens") or 0),
-            "cached_input_tokens": int(ocr_usage_summary.get("cached_input_tokens") or 0) + int(map_usage_summary.get("cached_input_tokens") or 0),
-            "reasoning_output_tokens": int(ocr_usage_summary.get("reasoning_output_tokens") or 0) + int(map_usage_summary.get("reasoning_output_tokens") or 0),
+            "request_count": rate_limit_usage_summary.get("request_count", 0),
+            "input_tokens": sum(int(rec.get("input_tokens") or 0) for rec in unique_usage_records),
+            "output_tokens": sum(int(rec.get("output_tokens") or 0) for rec in unique_usage_records),
+            "total_tokens": sum(int(rec.get("total_tokens") or 0) for rec in unique_usage_records),
+            "cached_input_tokens": sum(int(rec.get("cached_input_tokens") or 0) for rec in unique_usage_records),
+            "reasoning_output_tokens": sum(int(rec.get("reasoning_output_tokens") or 0) for rec in unique_usage_records),
         },
     }
-    if ocr_usage_summary or map_usage_summary:
+    if unique_usage_records:
         (output_dir / "openai_usage_summary.json").write_text(
             json.dumps(combined_usage_summary, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        (output_dir / "rate_limit_usage_summary.json").write_text(
+            json.dumps(rate_limit_usage_summary, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 
@@ -1701,7 +2151,14 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--pipeline_mode", type=str, default="ocr_map_resolve", choices=["ocr_only", "ocr_map", "ocr_map_resolve"])
 
     ap.add_argument("--ocr_model_id", type=str, default="gpt-5.4")
+    ap.add_argument("--route_model_id", type=str, default="", help="Defaults to map_model_id when empty")
     ap.add_argument("--map_model_id", type=str, default="gpt-5.4")
+    ap.add_argument(
+        "--map_agent_model_ids",
+        type=str,
+        default="",
+        help="Optional comma-separated per-map-agent model IDs. Length must be 1 or --map_agent_count.",
+    )
     ap.add_argument("--resolver_model_id", type=str, default="", help="Defaults to map_model_id when empty")
 
     ap.add_argument("--image_max_side", type=int, default=2048)
@@ -1710,12 +2167,15 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--enable_recall", action="store_true")
 
     ap.add_argument("--ocr_max_new_tokens", type=int, default=4096)
+    ap.add_argument("--route_max_new_tokens", type=int, default=512)
     ap.add_argument("--map_max_new_tokens", type=int, default=4096)
     ap.add_argument("--resolver_max_new_tokens", type=int, default=2048)
     ap.add_argument("--ocr_temperature", type=float, default=0.0)
+    ap.add_argument("--route_temperature", type=float, default=0.0)
     ap.add_argument("--map_temperature", type=float, default=0.0)
     ap.add_argument("--resolver_temperature", type=float, default=0.0)
     ap.add_argument("--ocr_top_p", type=float, default=0.95)
+    ap.add_argument("--route_top_p", type=float, default=0.95)
     ap.add_argument("--map_top_p", type=float, default=0.95)
     ap.add_argument("--resolver_top_p", type=float, default=0.95)
 
@@ -1738,6 +2198,23 @@ def parse_args() -> argparse.Namespace:
 
     ap.add_argument("--openai_api_key_env", type=str, default="OPENAI_API_KEY")
     ap.add_argument("--gemini_api_key_env", type=str, default="GOOGLE_API_KEY")
+    ap.add_argument(
+        "--rate_limits_json",
+        type=str,
+        default="",
+        help=(
+            "Inline JSON with per-provider per-model RPM/TPM limits, "
+            'for example: {"openai":{"gpt-5-mini":{"rpm":30,"tpm":30000}}}'
+        ),
+    )
+    ap.add_argument(
+        "--rate_limits_file",
+        type=str,
+        default="",
+        help="Optional JSON file with per-provider per-model RPM/TPM limits",
+    )
+    ap.add_argument("--rate_limit_window_sec", type=float, default=60.0)
+    ap.add_argument("--rate_limit_margin", type=float, default=0.9)
     ap.add_argument("--auto_rotate_landscape", action="store_true")
     ap.add_argument("--auto_rotate_landscape_ratio", type=float, default=1.05)
     ap.add_argument("--disable_dedup", action="store_true")

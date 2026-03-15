@@ -20,6 +20,7 @@ from urllib import request as urlrequest
 
 import numpy as np
 from PIL import Image, ImageOps
+from rate_limit_utils import estimate_text_tokens, normalize_headers, parse_retry_after_seconds
 
 logger = logging.getLogger("ocr_only_local_qwen")
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -294,6 +295,7 @@ class RemoteOpenAIResponsesOCR:
         max_retries: int,
         api_key_env: str,
         image_max_side: int,
+        rate_limiter: Any = None,
     ) -> None:
         self.model_id = model_id
         self.max_new_tokens = max(1, int(max_new_tokens))
@@ -303,6 +305,7 @@ class RemoteOpenAIResponsesOCR:
         self.max_retries = max(0, int(max_retries))
         self.api_key_env = str(api_key_env or "OPENAI_API_KEY").strip() or "OPENAI_API_KEY"
         self.image_max_side = max(256, int(image_max_side))
+        self._rate_limiter = rate_limiter
         self._sem = asyncio.Semaphore(max(1, int(max_inflight)))
         self._usage_lock = threading.Lock()
         self._usage_records: List[Dict[str, Any]] = []
@@ -329,11 +332,23 @@ class RemoteOpenAIResponsesOCR:
             "reasoning_output_tokens": RemoteOpenAIResponsesOCR._coerce_int(output_details.get("reasoning_tokens")),
         }
 
-    def _record_usage(self, payload: Dict[str, Any], image_path: Path) -> None:
+    def _record_usage(
+        self,
+        payload: Dict[str, Any],
+        image_path: Path,
+        request_id: str,
+        started_at: float,
+        rate_limit_meta: Dict[str, Any] | None,
+    ) -> None:
         usage = self._extract_usage(payload)
         usage["label"] = "ocr"
         usage["image"] = image_path.name
         usage["model"] = self.model_id
+        usage["request_id"] = request_id
+        usage["started_at"] = started_at
+        usage["finished_at"] = time.time()
+        if rate_limit_meta:
+            usage.update(rate_limit_meta)
         with self._usage_lock:
             self._usage_records.append(usage)
 
@@ -387,13 +402,19 @@ class RemoteOpenAIResponsesOCR:
             return "\n".join(texts).strip()
         raise RuntimeError("OpenAI response did not contain OCR text")
 
-    def _http_json(self, req: urlrequest.Request) -> Dict[str, Any]:
+    def _http_json(self, req: urlrequest.Request) -> Tuple[Dict[str, Any], Dict[str, str]]:
         with urlrequest.urlopen(req, timeout=self.timeout_sec) as resp:
             raw = resp.read()
-        return json.loads(raw.decode("utf-8"))
+            headers = normalize_headers(resp.headers)
+        return json.loads(raw.decode("utf-8")), headers
 
     def _ocr_sync(self, image_path: Path, system_prompt: str, user_text: str) -> str:
         api_key = self._read_api_key()
+        estimated_tokens = estimate_text_tokens(system_prompt, user_text) + self.max_new_tokens
+        started_at = time.time()
+        request_id = ""
+        if self._rate_limiter is not None:
+            request_id = self._rate_limiter.acquire(estimated_tokens=estimated_tokens, label="ocr")
         payload: Dict[str, Any] = {
             "model": self.model_id,
             "input": [
@@ -432,16 +453,37 @@ class RemoteOpenAIResponsesOCR:
         delay = 2.0
         for attempt in range(self.max_retries + 1):
             try:
-                data = self._http_json(req)
-                self._record_usage(data, image_path)
+                data, headers = self._http_json(req)
+                rate_limit_meta = None
+                if self._rate_limiter is not None and request_id:
+                    rate_limit_meta = self._rate_limiter.release(
+                        request_id,
+                        actual_tokens=int((data.get("usage") or {}).get("total_tokens") or 0),
+                        headers=headers,
+                        status="ok",
+                    )
+                self._record_usage(data, image_path, request_id, started_at, rate_limit_meta)
                 return self._extract_text(data)
             except urlerror.HTTPError as exc:
                 body = ""
+                headers = normalize_headers(getattr(exc, "headers", None))
                 try:
                     body = exc.read().decode("utf-8", errors="replace")
                 except Exception:
                     body = str(exc)
+                if self._rate_limiter is not None and request_id:
+                    self._rate_limiter.release(
+                        request_id,
+                        actual_tokens=None,
+                        headers=headers,
+                        status=f"http_{exc.code}",
+                        error=body[:500],
+                    )
+                    request_id = ""
                 if exc.code in {408, 429, 500, 502, 503, 504} and attempt < self.max_retries:
+                    retry_after = parse_retry_after_seconds(headers, body)
+                    if retry_after is not None:
+                        delay = max(delay, retry_after)
                     logger.warning(
                         "Transient OpenAI OCR error for %s (status=%s, attempt=%d/%d). Retrying in %.1fs.",
                         image_path.name,
@@ -452,9 +494,19 @@ class RemoteOpenAIResponsesOCR:
                     )
                     time.sleep(delay)
                     delay *= 2.0
+                    if self._rate_limiter is not None:
+                        request_id = self._rate_limiter.acquire(estimated_tokens=estimated_tokens, label="ocr")
                     continue
                 raise RuntimeError(f"OpenAI OCR request failed: status={exc.code} body={body}") from exc
             except Exception:
+                if self._rate_limiter is not None and request_id:
+                    self._rate_limiter.release(
+                        request_id,
+                        actual_tokens=None,
+                        status="exception",
+                        error="local_exception",
+                    )
+                    request_id = ""
                 if attempt < self.max_retries:
                     logger.warning(
                         "Transient OpenAI OCR failure for %s (attempt=%d/%d). Retrying in %.1fs.",
@@ -465,6 +517,8 @@ class RemoteOpenAIResponsesOCR:
                     )
                     time.sleep(delay)
                     delay *= 2.0
+                    if self._rate_limiter is not None:
+                        request_id = self._rate_limiter.acquire(estimated_tokens=estimated_tokens, label="ocr")
                     continue
                 raise
         raise RuntimeError(f"OpenAI OCR failed after retries: {image_path.name}")
@@ -489,6 +543,7 @@ class RemoteGeminiOCR:
         max_retries: int,
         api_key_env: str,
         image_max_side: int,
+        rate_limiter: Any = None,
     ) -> None:
         self.model_id = model_id
         self.max_new_tokens = max(1, int(max_new_tokens))
@@ -498,7 +553,10 @@ class RemoteGeminiOCR:
         self.max_retries = max(0, int(max_retries))
         self.api_key_env = str(api_key_env or "GOOGLE_API_KEY").strip() or "GOOGLE_API_KEY"
         self.image_max_side = max(256, int(image_max_side))
+        self._rate_limiter = rate_limiter
         self._sem = asyncio.Semaphore(max(1, int(max_inflight)))
+        self._usage_lock = threading.Lock()
+        self._usage_records: List[Dict[str, Any]] = []
 
     def _read_api_key(self) -> str:
         api_key = os.getenv(self.api_key_env, "").strip()
@@ -528,13 +586,57 @@ class RemoteGeminiOCR:
             return "\n".join(texts).strip()
         raise RuntimeError("Gemini response did not contain OCR text")
 
-    def _http_json(self, req: urlrequest.Request) -> Dict[str, Any]:
+    @staticmethod
+    def _extract_usage(payload: Dict[str, Any]) -> Dict[str, Any]:
+        usage = payload.get("usageMetadata") or {}
+        input_tokens = int(usage.get("promptTokenCount") or 0)
+        output_tokens = int(usage.get("candidatesTokenCount") or 0)
+        total_tokens = int(usage.get("totalTokenCount") or (input_tokens + output_tokens))
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "cached_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+        }
+
+    def usage_records(self) -> List[Dict[str, Any]]:
+        with self._usage_lock:
+            return [dict(item) for item in self._usage_records]
+
+    def _record_usage(
+        self,
+        payload: Dict[str, Any],
+        image_path: Path,
+        request_id: str,
+        started_at: float,
+        rate_limit_meta: Dict[str, Any] | None,
+    ) -> None:
+        usage = self._extract_usage(payload)
+        usage["label"] = "ocr"
+        usage["image"] = image_path.name
+        usage["model"] = self.model_id
+        usage["request_id"] = request_id
+        usage["started_at"] = started_at
+        usage["finished_at"] = time.time()
+        if rate_limit_meta:
+            usage.update(rate_limit_meta)
+        with self._usage_lock:
+            self._usage_records.append(usage)
+
+    def _http_json(self, req: urlrequest.Request) -> Tuple[Dict[str, Any], Dict[str, str]]:
         with urlrequest.urlopen(req, timeout=self.timeout_sec) as resp:
             raw = resp.read()
-        return json.loads(raw.decode("utf-8"))
+            headers = normalize_headers(resp.headers)
+        return json.loads(raw.decode("utf-8")), headers
 
     def _ocr_sync(self, image_path: Path, system_prompt: str, user_text: str) -> str:
         api_key = self._read_api_key()
+        estimated_tokens = estimate_text_tokens(system_prompt, user_text) + self.max_new_tokens
+        started_at = time.time()
+        request_id = ""
+        if self._rate_limiter is not None:
+            request_id = self._rate_limiter.acquire(estimated_tokens=estimated_tokens, label="ocr")
         payload: Dict[str, Any] = {
             "systemInstruction": {
                 "parts": [{"text": system_prompt}],
@@ -564,15 +666,37 @@ class RemoteGeminiOCR:
         delay = 2.0
         for attempt in range(self.max_retries + 1):
             try:
-                data = self._http_json(req)
+                data, headers = self._http_json(req)
+                rate_limit_meta = None
+                if self._rate_limiter is not None and request_id:
+                    rate_limit_meta = self._rate_limiter.release(
+                        request_id,
+                        actual_tokens=int((data.get("usageMetadata") or {}).get("totalTokenCount") or 0),
+                        headers=headers,
+                        status="ok",
+                    )
+                self._record_usage(data, image_path, request_id, started_at, rate_limit_meta)
                 return self._extract_text(data)
             except urlerror.HTTPError as exc:
                 body = ""
+                headers = normalize_headers(getattr(exc, "headers", None))
                 try:
                     body = exc.read().decode("utf-8", errors="replace")
                 except Exception:
                     body = str(exc)
+                if self._rate_limiter is not None and request_id:
+                    self._rate_limiter.release(
+                        request_id,
+                        actual_tokens=None,
+                        headers=headers,
+                        status=f"http_{exc.code}",
+                        error=body[:500],
+                    )
+                    request_id = ""
                 if exc.code in {408, 429, 500, 502, 503, 504} and attempt < self.max_retries:
+                    retry_after = parse_retry_after_seconds(headers, body)
+                    if retry_after is not None:
+                        delay = max(delay, retry_after)
                     logger.warning(
                         "Transient Gemini OCR error for %s (status=%s, attempt=%d/%d). Retrying in %.1fs.",
                         image_path.name,
@@ -583,9 +707,19 @@ class RemoteGeminiOCR:
                     )
                     time.sleep(delay)
                     delay *= 2.0
+                    if self._rate_limiter is not None:
+                        request_id = self._rate_limiter.acquire(estimated_tokens=estimated_tokens, label="ocr")
                     continue
                 raise RuntimeError(f"Gemini OCR request failed: status={exc.code} body={body}") from exc
             except Exception:
+                if self._rate_limiter is not None and request_id:
+                    self._rate_limiter.release(
+                        request_id,
+                        actual_tokens=None,
+                        status="exception",
+                        error="local_exception",
+                    )
+                    request_id = ""
                 if attempt < self.max_retries:
                     logger.warning(
                         "Transient Gemini OCR failure for %s (attempt=%d/%d). Retrying in %.1fs.",
@@ -596,6 +730,8 @@ class RemoteGeminiOCR:
                     )
                     time.sleep(delay)
                     delay *= 2.0
+                    if self._rate_limiter is not None:
+                        request_id = self._rate_limiter.acquire(estimated_tokens=estimated_tokens, label="ocr")
                     continue
                 raise
         raise RuntimeError(f"Gemini OCR failed after retries: {image_path.name}")
