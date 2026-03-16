@@ -1620,6 +1620,47 @@ def evaluate_against_reference(
     return metrics
 
 
+def refresh_combined_patient_csv(output_dir: Path, output_columns: List[str]) -> Optional[Path]:
+    roots_to_try: List[Path] = []
+    seen_roots = set()
+    for root in (Path(output_dir), Path(output_dir).parent):
+        root = root.resolve()
+        if root in seen_roots:
+            continue
+        seen_roots.add(root)
+        roots_to_try.append(root)
+
+    for root in roots_to_try:
+        nested_csvs = sorted(
+            p for p in root.glob("Patient_*/*.csv") if p.name == f"{p.parent.name}.csv"
+        )
+        direct_csvs = sorted(p for p in root.glob("Patient_*.csv") if p.stem.startswith("Patient_"))
+        csv_paths = nested_csvs if len(nested_csvs) >= 2 else direct_csvs
+        if len(csv_paths) < 2:
+            continue
+
+        rows: List[Dict[str, Any]] = []
+        for csv_path in csv_paths:
+            try:
+                df = pd.read_csv(csv_path, dtype=object)
+            except Exception as exc:
+                logger.warning("Skipping %s while building combined CSV: %s", csv_path, exc)
+                continue
+            if df.empty:
+                continue
+            row = {col: (df.iloc[0][col] if col in df.columns else None) for col in output_columns}
+            rows.append(row)
+
+        if len(rows) < 2:
+            continue
+
+        out_path = root / "all_patients.csv"
+        pd.DataFrame(rows, columns=output_columns).to_csv(out_path, index=False)
+        logger.info("Refreshed combined patient CSV: %s (%d rows)", out_path, len(rows))
+        return out_path
+    return None
+
+
 async def maybe_warm_backend(backend: Any) -> None:
     warmup = getattr(backend, "warmup", None)
     if callable(warmup):
@@ -2062,6 +2103,7 @@ async def run(args: argparse.Namespace) -> None:
         res=patient_res,
         output_columns=output_columns,
     )
+    refresh_combined_patient_csv(output_dir=output_dir, output_columns=output_columns)
 
     evaluation = evaluate_against_reference(
         output_dir=output_dir,
