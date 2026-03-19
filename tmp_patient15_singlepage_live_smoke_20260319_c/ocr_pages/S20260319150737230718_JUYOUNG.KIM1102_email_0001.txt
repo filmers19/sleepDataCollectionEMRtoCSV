@@ -1,0 +1,167 @@
+Ewha Medical Center Neurology  
+NIGHT POLYSOMNOGRAPHY REPORT
+
+Name: 최종일  
+ID: 11021787  
+Height: 165 cm  
+Age: 64  
+PSG#: P2012-33  
+Sex: M  
+Weight: 68 kg  
+Date: 2012.05.08  
+Dept./Referred MD: ENT, Prof. 변상현  
+Body Mass Index: 25 kg/m^2  
+Technician: 이선복  
+Neck Circumference: cm
+
+EWHA UNIVERSITY MOKDONG HOSPITAL  
+신경과 수면검사  
+POLYSOMNOGRAPHY DATA
+
+등록번호 11021787  
+Test No. P2012-33  
+성명 최종일  
+Sex/Age M/64  
+BMI 25  
+ESS 0  
+BDI 4
+
+SLEEP ARCHITECTURE (Light Off-22:47 PM - Light on 05:45 AM)
+
+Time-in-Bed(min) 418.5  
+Total Sleep Time(min) 378  
+Sleep Latency(min) 1.5  
+REM Latency(min) 45.5  
+Sleep Efficiency(%) 90.3  
+Sleep Time On Back(%) 100  
+Total Arousal # 31  
+Arousal Index 4.9/hr  
+Respiratory Arousal 4.8/hr  
+Snoring Arousal 0.0/hr  
+PLM Arousal 0.0/hr  
+WASO 39 min (9.4%)  
+Non-REM/TST(%) 90.3  
+REM/TST(%) 19.7  
+Stage N1/TST(%) 19.8  
+Stage N2/TST(%) 54.6  
+Stage N3/TST(%) 5.8  
+Spontaneous 0.2/hr
+
+RESPIRATORY EVENT
+
+Obstructive Apnea  
+No. 0 / Index 0.0/hr
+
+Central Apnea  
+No. 6 / Index 1.0/hr
+
+Mixed Apnea  
+No. 14 / Index 2.8/hr
+
+Hypopnea  
+No. 145 / Index 23.0/hr
+
+Flow limit. Ar.  
+No. 0 / Index 0.0/hr
+
+Total  
+No. 311 / Index 49.4/hr
+
+REM  
+No. 61 / Index 49.1/hr
+
+NREM  
+No. 250 / Index 49.4/hr
+
+* Flow limitation arousal
+
+RESPIRATORY DISTURBANCE INDEX (RDI) : AHI+Flow limitation Arousal  
+Index 75.6+0 = 75.6/hr
+
+AHI / REM / NREM
+
+Time(min)  
+REM 74.5  
+NREM 303.5  
+REM 60.4  
+NREM 79.3
+
+AHI (/hr)  
+Sup 74.5  
+Lat 0  
+REM 30.5  
+NREM 0  
+REM 0  
+NREM 0
+
+Total PLMS Index 0/hr
+
+LEG MOVEMENT
+
+Arousal/Jerk 0  
+PLM Arousal index 0/hr
+
+HEART RATE
+
+Baseline HR 68  
+Aystole # 0  
+Arrhythmia # 0  
+High 94  
+Index 0  
+PVC# 0  
+Low 62  
+Index 0
+
+SaO2
+
+Baseline SaO2 Awake 97%  
+Asleep 97%  
+Lowest SaO2 76%
+
+REMI / NREMI / AHI  
+REM 0  
+NREM 0  
+REM 0  
+NREM 0
+
+Sup 74.5  
+Lat 0  
+REM 30.5  
+NREM 60.4  
+NREM 79.3
+
+I. Result
+
+1. This polysomnogram is indicative of severe obstructive sleep apnea-hypopnea syndrome.  
+2. Sleep latency was decreased to 1.5 minutes and REM sleep latency was also decreased to 45.5 minutes.  
+3. Sleep efficiency was decreased to 90.3 %.  
+4. Sleep architecture showed increased stage 1 sleep and decreased stage 3, REM sleep.  
+5. The respiratory disturbance index (AHI+Flow limitation Arousal) was 75.6 per hour of sleep.  
+6. The patient slept in supine position for 100 % of total sleep.  
+7. The apnea/hypopnea index in supine position was 75.6 per hour of sleep.  
+8. The apnea/hypopnea index in lateral position was 0.0 per hour of sleep.  
+9. Arousal index (number of arousal per hour) was 4.9 per hour of sleep.  
+10. The wakefulness after sleep onset (WASO) was 9.4 %.  
+11. Severe snoring was observed.  
+12. Oxygen desaturation occurred to a nadir of 76% (PaO2 = 39.2 mmHg).  
+13. Cardiac arrhythmia was not noted.  
+14. PLM movement was not observed.  
+15. Epworth sleepiness scale was 9, Stanford sleepiness scale was 2.  
+16. Beck Depression Inventory was 4. There may be denial of depression.
+
+# Diagnosis :
+1. Severe obstructive sleep apnea-hypopnea syndrome (OSASH)  
+2. Flow limitation with O2 desaturation to a nadir of 76%  
+3. Severe snoring  
+3. Increased stage 1 sleep and decreased stage 3, REM sleep.  
+# Obesity
+
+III. Conclusion and Recommendation
+
+1. Nasal CPAP therapy after CPAP titration  
+2. Evaluation and correction for nose problem or upper airway surgery, if needed  
+3. Body weight control  
+4. Sleep hygiene education
+
+7-20-1. 05. 05  
+7-20-2. 05. 05

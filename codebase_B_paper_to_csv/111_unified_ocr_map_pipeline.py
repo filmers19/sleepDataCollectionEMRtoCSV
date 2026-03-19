@@ -841,6 +841,9 @@ async def route_ocr_text(
     ocr_text: str,
     max_attempts: int,
 ) -> Dict[str, Any]:
+    direct_or_heuristic = pipeline_mod.classify_map_route_heuristic(ocr_text)
+    if str(direct_or_heuristic.get("reason") or "") == "direct_keyword_router":
+        return direct_or_heuristic
     try:
         raw = await text_to_json(
             llm=llm,
@@ -853,7 +856,7 @@ async def route_ocr_text(
         )
         return pipeline_mod.normalize_route_decision(raw, ocr_text)
     except Exception as exc:
-        fallback = pipeline_mod.classify_map_route_heuristic(ocr_text)
+        fallback = direct_or_heuristic
         fallback["reason"] = f"heuristic_fallback_after_route_error:{type(exc).__name__}"
         logger.warning("Route classifier failed, falling back to heuristic router: %s", exc)
         return fallback
@@ -865,12 +868,20 @@ async def map_to_json(
     ocr_text: str,
     candidates_block: str,
     route_name: str,
+    official_questionnaire: bool,
+    official_family: str,
     max_attempts: int,
 ) -> Dict[str, Any]:
     return await text_to_json(
         llm=llm,
         system_prompt=pipeline_mod.MAP_SYSTEM,
-        user_text=pipeline_mod.build_map_user_prompt(ocr_text, candidates_block, route_name=route_name),
+        user_text=pipeline_mod.build_map_user_prompt(
+            ocr_text,
+            candidates_block,
+            route_name=route_name,
+            official_questionnaire=official_questionnaire,
+            official_family=official_family,
+        ),
         pipeline_mod=pipeline_mod,
         schema_hint=build_map_schema_hint(),
         max_attempts=max_attempts,
@@ -885,12 +896,21 @@ async def map_recall_to_json(
     candidates_block: str,
     existing_json: Dict[str, Any],
     route_name: str,
+    official_questionnaire: bool,
+    official_family: str,
     max_attempts: int,
 ) -> Dict[str, Any]:
     return await text_to_json(
         llm=llm,
         system_prompt=pipeline_mod.MAP_RECALL_SYSTEM,
-        user_text=pipeline_mod.build_map_recall_user_prompt(ocr_text, candidates_block, existing_json, route_name=route_name),
+        user_text=pipeline_mod.build_map_recall_user_prompt(
+            ocr_text,
+            candidates_block,
+            existing_json,
+            route_name=route_name,
+            official_questionnaire=official_questionnaire,
+            official_family=official_family,
+        ),
         pipeline_mod=pipeline_mod,
         schema_hint=build_map_schema_hint(),
         max_attempts=max_attempts,
@@ -932,6 +952,8 @@ async def map_ocr_text_single_agent(
     retriever: Any,
     ocr_text: str,
     route_name: str,
+    official_questionnaire: bool,
+    official_family: str,
     json_retry_attempts: int,
     enable_recall: bool,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, str]], Dict[str, str], Dict[str, Dict[str, Any]]]:
@@ -941,7 +963,7 @@ async def map_ocr_text_single_agent(
     stage_cdm_contexts: Dict[str, str] = {}
     stage_rejected: Dict[str, Dict[str, Any]] = {}
     route_name = str(route_name or pipeline_mod.DEFAULT_MAP_ROUTE)
-    candidates_block = retriever.prompt_block_for_route(route_name)
+    candidates_block = retriever.prompt_block_for_route(route_name, official_questionnaire=official_questionnaire)
     ocr_chunks = pipeline_mod.split_ocr_text_for_map_route(ocr_text, route_name)
 
     for ocr_chunk in ocr_chunks:
@@ -951,6 +973,8 @@ async def map_ocr_text_single_agent(
             ocr_text=ocr_chunk,
             candidates_block=candidates_block,
             route_name=route_name,
+            official_questionnaire=official_questionnaire,
+            official_family=official_family,
             max_attempts=json_retry_attempts,
         )
         pipeline_mod.merge_map_payload_into_stage(
@@ -963,6 +987,8 @@ async def map_ocr_text_single_agent(
             stage_contexts=stage_contexts,
             stage_cdm_contexts=stage_cdm_contexts,
             stage_rejected=stage_rejected,
+            official_questionnaire=official_questionnaire,
+            official_family=official_family,
         )
 
     if enable_recall and pipeline_mod.should_run_recall_pass(ocr_text, stage_valid):
@@ -973,6 +999,8 @@ async def map_ocr_text_single_agent(
             candidates_block=candidates_block,
             existing_json=stage_valid,
             route_name=route_name,
+            official_questionnaire=official_questionnaire,
+            official_family=official_family,
             max_attempts=json_retry_attempts,
         )
         pipeline_mod.merge_map_payload_into_stage(
@@ -985,6 +1013,8 @@ async def map_ocr_text_single_agent(
             stage_contexts=stage_contexts,
             stage_cdm_contexts=stage_cdm_contexts,
             stage_rejected=stage_rejected,
+            official_questionnaire=official_questionnaire,
+            official_family=official_family,
         )
 
     apply_core_backfill_to_stage(
@@ -1023,11 +1053,18 @@ async def map_ocr_text_multi_agent(
     retriever: Any,
     ocr_text: str,
     map_agent_count: int,
+    map_agent_count_by_route: Optional[Dict[str, int]],
     route_name: str,
+    official_questionnaire: bool,
+    official_family: str,
     json_retry_attempts: int,
     enable_recall: bool,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, str]], Dict[str, str], Dict[str, Dict[str, Any]]]:
-    n_agents = max(1, int(map_agent_count))
+    route_name = str(route_name or pipeline_mod.DEFAULT_MAP_ROUTE)
+    route_override = 0
+    if map_agent_count_by_route:
+        route_override = max(0, int(map_agent_count_by_route.get(route_name, 0) or 0))
+    n_agents = max(1, int(route_override or map_agent_count))
     agent_backends = _resolve_agent_backends(llm, n_agents=n_agents)
     if n_agents <= 1:
         return await map_ocr_text_single_agent(
@@ -1036,6 +1073,8 @@ async def map_ocr_text_multi_agent(
             retriever=retriever,
             ocr_text=ocr_text,
             route_name=route_name,
+            official_questionnaire=official_questionnaire,
+            official_family=official_family,
             json_retry_attempts=json_retry_attempts,
             enable_recall=enable_recall,
         )
@@ -1045,8 +1084,12 @@ async def map_ocr_text_multi_agent(
     stage_contexts: Dict[str, Dict[str, str]] = {}
     stage_cdm_contexts: Dict[str, str] = {}
     stage_rejected: Dict[str, Dict[str, Any]] = {}
-    route_name = str(route_name or pipeline_mod.DEFAULT_MAP_ROUTE)
-    map_agents = pipeline_mod.build_map_agent_specs(retriever, n_agents, route_name=route_name)
+    map_agents = pipeline_mod.build_map_agent_specs(
+        retriever,
+        n_agents,
+        route_name=route_name,
+        official_questionnaire=official_questionnaire,
+    )
     ocr_chunks = pipeline_mod.split_ocr_text_for_map_route(ocr_text, route_name)
 
     async def _call(agent: Any, agent_backend: TextAgent, ocr_chunk: str) -> Tuple[Any, str, Dict[str, Any]]:
@@ -1056,6 +1099,8 @@ async def map_ocr_text_multi_agent(
             ocr_text=ocr_chunk,
             candidates_block=agent.candidates_block,
             route_name=agent.route_name,
+            official_questionnaire=official_questionnaire,
+            official_family=official_family,
             max_attempts=json_retry_attempts,
         )
         return agent, ocr_chunk, payload
@@ -1083,6 +1128,8 @@ async def map_ocr_text_multi_agent(
             stage_contexts=stage_contexts,
             stage_cdm_contexts=stage_cdm_contexts,
             stage_rejected=stage_rejected,
+            official_questionnaire=official_questionnaire,
+            official_family=official_family,
         )
 
     if enable_recall and pipeline_mod.should_run_recall_pass(ocr_text, stage_valid):
@@ -1094,6 +1141,8 @@ async def map_ocr_text_multi_agent(
                 candidates_block=agent.candidates_block,
                 existing_json=stage_valid,
                 route_name=agent.route_name,
+                official_questionnaire=official_questionnaire,
+                official_family=official_family,
                 max_attempts=json_retry_attempts,
             )
             return agent, payload
@@ -1117,6 +1166,8 @@ async def map_ocr_text_multi_agent(
                 stage_contexts=stage_contexts,
                 stage_cdm_contexts=stage_cdm_contexts,
                 stage_rejected=stage_rejected,
+                official_questionnaire=official_questionnaire,
+                official_family=official_family,
             )
 
     apply_core_backfill_to_stage(
@@ -1513,6 +1564,24 @@ def _normalize_semantic_value(value: Any) -> Any:
     return re.sub(r"\s+", " ", text)
 
 
+def build_map_agent_count_by_route(args: argparse.Namespace, pipeline_mod: Any) -> Dict[str, int]:
+    def _pos_int(v: Any) -> int:
+        try:
+            iv = int(v)
+        except Exception:
+            return 0
+        return max(0, iv)
+
+    return {
+        str(pipeline_mod.MAP_ROUTE_NIGHT_QUESTIONNAIRE): _pos_int(getattr(args, "map_agent_count_night", 0)),
+        str(pipeline_mod.MAP_ROUTE_MORNING_QUESTIONNAIRE): _pos_int(getattr(args, "map_agent_count_morning", 0)),
+        str(pipeline_mod.MAP_ROUTE_PSG_REPORT_GENERAL): _pos_int(getattr(args, "map_agent_count_psg", 0)),
+        str(pipeline_mod.MAP_ROUTE_PSG_REPORT_EXTENSIVE): _pos_int(getattr(args, "map_agent_count_psg", 0)),
+        str(pipeline_mod.MAP_ROUTE_CPAP_PSG_REPORT_GENERAL): _pos_int(getattr(args, "map_agent_count_cpap", 0)),
+        str(pipeline_mod.MAP_ROUTE_CPAP_PSG_REPORT_EXTENSIVE): _pos_int(getattr(args, "map_agent_count_cpap", 0)),
+    }
+
+
 def _json_safe_value(value: Any) -> Any:
     try:
         import numpy as np  # type: ignore
@@ -1541,18 +1610,61 @@ def evaluate_against_reference(
     if reference_name:
         matches = df[df["Name"].astype(str) == str(reference_name)]
         if matches.empty:
-            raise RuntimeError(f"Reference name not found in example.csv: {reference_name}")
+            skipped = {
+                "patient_name": patient_name,
+                "reference_name": reference_name,
+                "evaluation_status": "skipped",
+                "skip_reason": "reference_name_not_found",
+                "semantic_accuracy": None,
+                "precision": None,
+                "recall": None,
+                "f1": None,
+                "mismatches": None,
+            }
+            (output_dir / "evaluation.json").write_text(
+                json.dumps(skipped, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            logger.warning(
+                "Skipping evaluation for %s: reference name not found in example.csv: %s",
+                patient_name,
+                reference_name,
+            )
+            return skipped
         ref_row = matches.iloc[0]
         selector = {"reference_name": reference_name}
     else:
         if reference_index < 1 or reference_index > len(df):
-            raise RuntimeError(f"Reference index out of range: {reference_index}")
+            skipped = {
+                "patient_name": patient_name,
+                "reference_index_1based": reference_index,
+                "available_reference_rows": int(len(df)),
+                "evaluation_status": "skipped",
+                "skip_reason": "reference_index_out_of_range",
+                "semantic_accuracy": None,
+                "precision": None,
+                "recall": None,
+                "f1": None,
+                "mismatches": None,
+            }
+            (output_dir / "evaluation.json").write_text(
+                json.dumps(skipped, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            logger.warning(
+                "Skipping evaluation for %s: reference index %d out of range for example.csv with %d rows",
+                patient_name,
+                reference_index,
+                len(df),
+            )
+            return skipped
         ref_row = df.iloc[reference_index - 1]
         selector = {"reference_index_1based": reference_index}
 
     metrics = {
         "patient_name": patient_name,
         **selector,
+        "evaluation_status": "completed",
         "total_columns": 0,
         "semantic_matches": 0,
         "semantic_accuracy": 0.0,
@@ -1698,19 +1810,21 @@ async def run(args: argparse.Namespace) -> None:
     prepared_image_dir = (output_dir / "prepared_images") if args.auto_rotate_landscape else None
 
     map_agent_count = max(1, int(args.map_agent_count))
+    map_agent_count_by_route = build_map_agent_count_by_route(args, pipeline_mod)
+    max_route_agent_count = max([map_agent_count] + list(map_agent_count_by_route.values()))
     requested_map_agent_model_ids = parse_model_id_list(args.map_agent_model_ids)
     if requested_map_agent_model_ids:
         if len(requested_map_agent_model_ids) == 1:
-            map_agent_model_ids = requested_map_agent_model_ids * map_agent_count
-        elif len(requested_map_agent_model_ids) == map_agent_count:
+            map_agent_model_ids = requested_map_agent_model_ids * max_route_agent_count
+        elif len(requested_map_agent_model_ids) == max_route_agent_count:
             map_agent_model_ids = requested_map_agent_model_ids
         else:
             raise ValueError(
-                "--map_agent_model_ids length must be 1 or match --map_agent_count. "
-                f"Got {len(requested_map_agent_model_ids)} vs {map_agent_count}."
+                "--map_agent_model_ids length must be 1 or match the effective maximum map-agent count. "
+                f"Got {len(requested_map_agent_model_ids)} vs {max_route_agent_count}."
             )
     else:
-        map_agent_model_ids = [str(args.map_model_id)] * map_agent_count
+        map_agent_model_ids = [str(args.map_model_id)] * max_route_agent_count
 
     route_model_id = str(args.route_model_id or "").strip() or str(args.map_model_id)
     resolver_model_id = str(args.resolver_model_id or "").strip() or str(args.map_model_id)
@@ -1747,6 +1861,7 @@ async def run(args: argparse.Namespace) -> None:
         "resolver_backend": resolver_backend_kind,
         "map_bundle_size": max(1, int(args.map_bundle_size)),
         "map_agent_count": map_agent_count,
+        "map_agent_count_by_route": map_agent_count_by_route,
         "enable_recall": bool(args.enable_recall),
         "disable_conflict_resolver": bool(args.disable_conflict_resolver or args.pipeline_mode != "ocr_map_resolve"),
         "map_json_retry_attempts": max(1, int(args.map_json_retry_attempts)),
@@ -1952,32 +2067,78 @@ async def run(args: argparse.Namespace) -> None:
         return
 
     bundles = pipeline_mod.chunked(ordered_ocr_pairs, max(1, int(args.map_bundle_size)))
+    bundle_records: List[Dict[str, Any]] = []
+    for idx, bundle in enumerate(bundles, start=1):
+        image_names = [img.name for img, _ in bundle]
+        bundle_name = pipeline_mod.make_bundle_image_name(idx, image_names)
+        merged_text = pipeline_mod.merge_ocr_text_blocks([(img.name, txt) for img, txt in bundle]).strip()
+        if not merged_text:
+            page_errors.append({"image": bundle_name, "error_type": "EmptyMergedOCR", "error": "Merged OCR text is empty"})
+            continue
+        bundle_records.append(
+            {
+                "idx": idx,
+                "bundle": bundle,
+                "bundle_name": bundle_name,
+                "image_names": image_names,
+                "merged_text": merged_text,
+            }
+        )
+
+    route_results: Dict[str, Dict[str, Any]] = {}
+
+    async def _route_one(record: Dict[str, Any]) -> None:
+        bundle_name = record["bundle_name"]
+        merged_text = record["merged_text"]
+        route_info = await route_ocr_text(
+            llm=route_backend,
+            pipeline_mod=pipeline_mod,
+            ocr_text=merged_text,
+            max_attempts=max(1, min(2, int(args.map_json_retry_attempts))),
+        )
+        route_results[bundle_name] = route_info
+
+    route_tasks = [asyncio.create_task(_route_one(record)) for record in bundle_records]
+    for fut in asyncio.as_completed(route_tasks):
+        await fut
+
+    official_tag_by_bundle = pipeline_mod.classify_official_questionnaire_sequence(
+        [
+            {
+                "bundle_name": record["bundle_name"],
+                "route_name": str(route_results.get(record["bundle_name"], {}).get("route") or pipeline_mod.DEFAULT_MAP_ROUTE),
+                "ocr_text": record["merged_text"],
+            }
+            for record in bundle_records
+        ]
+    )
+
     page_results: List[Any] = []
 
-    async def _map_one(idx: int, bundle: List[Tuple[Path, str]]) -> None:
+    async def _map_one(record: Dict[str, Any]) -> None:
         async with map_sem:
-            image_names = [img.name for img, _ in bundle]
-            bundle_name = pipeline_mod.make_bundle_image_name(idx, image_names)
-            merged_text = pipeline_mod.merge_ocr_text_blocks([(img.name, txt) for img, txt in bundle]).strip()
-            if not merged_text:
-                page_errors.append({"image": bundle_name, "error_type": "EmptyMergedOCR", "error": "Merged OCR text is empty"})
-                return
+            idx = int(record["idx"])
+            image_names = record["image_names"]
+            bundle_name = record["bundle_name"]
+            merged_text = record["merged_text"]
+            route_info = route_results.get(bundle_name) or pipeline_mod.classify_map_route_heuristic(merged_text)
+            official_info = official_tag_by_bundle.get(bundle_name) or {
+                "official_questionnaire": False,
+                "official_family": "NON",
+            }
 
             t0 = time.perf_counter()
             try:
-                route_info = await route_ocr_text(
-                    llm=route_backend,
-                    pipeline_mod=pipeline_mod,
-                    ocr_text=merged_text,
-                    max_attempts=max(1, min(2, int(args.map_json_retry_attempts))),
-                )
                 raw_obj, valid_obj, valid_contexts, valid_cdm_contexts, rejected_fields = await map_ocr_text_multi_agent(
                     llm=map_agent_backends,
                     pipeline_mod=pipeline_mod,
                     retriever=retriever,
                     ocr_text=merged_text,
                     map_agent_count=map_agent_count,
+                    map_agent_count_by_route=map_agent_count_by_route,
                     route_name=str(route_info.get("route") or pipeline_mod.DEFAULT_MAP_ROUTE),
+                    official_questionnaire=bool(official_info.get("official_questionnaire")),
+                    official_family=str(official_info.get("official_family") or "NON"),
                     json_retry_attempts=args.map_json_retry_attempts,
                     enable_recall=args.enable_recall,
                 )
@@ -2039,6 +2200,8 @@ async def run(args: argparse.Namespace) -> None:
             "map_route_morning_score": route_info.get("morning_score"),
             "map_route_night_score": route_info.get("night_score"),
             "map_route_reason": route_info.get("reason"),
+            "official_questionnaire": bool(official_info.get("official_questionnaire")),
+            "official_questionnaire_family": str(official_info.get("official_family") or "NON"),
             "ok": ok,
             "elapsed_seconds": time.perf_counter() - t0,
             "valid_keys": valid_count,
@@ -2058,7 +2221,7 @@ async def run(args: argparse.Namespace) -> None:
             valid_count,
         )
 
-    map_tasks = [asyncio.create_task(_map_one(i, bundle)) for i, bundle in enumerate(bundles, start=1)]
+    map_tasks = [asyncio.create_task(_map_one(record)) for record in bundle_records]
     for fut in asyncio.as_completed(map_tasks):
         await fut
 
@@ -2206,6 +2369,10 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--image_max_side", type=int, default=2048)
     ap.add_argument("--map_bundle_size", type=int, default=1)
     ap.add_argument("--map_agent_count", type=int, default=1)
+    ap.add_argument("--map_agent_count_night", type=int, default=0, help="Per-route override for night questionnaire pages. 0 means use --map_agent_count.")
+    ap.add_argument("--map_agent_count_morning", type=int, default=0, help="Per-route override for morning questionnaire pages. 0 means use --map_agent_count.")
+    ap.add_argument("--map_agent_count_psg", type=int, default=0, help="Per-route override for PSG report pages. 0 means use --map_agent_count.")
+    ap.add_argument("--map_agent_count_cpap", type=int, default=0, help="Per-route override for CPAP PSG report pages. 0 means use --map_agent_count.")
     ap.add_argument("--enable_recall", action="store_true")
 
     ap.add_argument("--ocr_max_new_tokens", type=int, default=4096)

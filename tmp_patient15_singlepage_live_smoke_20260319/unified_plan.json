@@ -1,0 +1,44 @@
+{
+  "patient_name": "Patient_15",
+  "patient_dir": "/home/yhlee/human_workspace/0_research/dataCollection/paper_patients/Patient_15",
+  "single_image": "",
+  "selected_images": [
+    "S20260319150737230718_JUYOUNG.KIM1102_email_0001.jpg"
+  ],
+  "output_dir": "/home/yhlee/human_workspace/0_research/dataCollection/tmp_patient15_singlepage_live_smoke_20260319",
+  "pipeline_mode": "ocr_only",
+  "reuse_ocr_dir": "",
+  "ocr_model_id": "gpt-5.4-mini",
+  "ocr_backend": "openai_responses",
+  "route_model_id": "gpt-5.4",
+  "route_backend": "shared_map_backend",
+  "map_model_id": "gpt-5.4",
+  "map_backend": "openai",
+  "map_agent_model_ids": [
+    "gpt-5.4"
+  ],
+  "map_agent_backend_by_model": {
+    "gpt-5.4": "openai"
+  },
+  "resolver_model_id": "gpt-5.4",
+  "resolver_backend": "shared_map_backend",
+  "map_bundle_size": 1,
+  "map_agent_count": 1,
+  "map_agent_count_by_route": {
+    "map_route_night_questionnaire": 0,
+    "map_route_morning_questionnaire": 0,
+    "map_route_psg_report_general": 0,
+    "map_route_psg_report_extensive": 0,
+    "map_route_cpap_psg_report_general": 0,
+    "map_route_cpap_psg_report_extensive": 0
+  },
+  "enable_recall": false,
+  "disable_conflict_resolver": true,
+  "map_json_retry_attempts": 3,
+  "resolver_json_retry_attempts": 2,
+  "images_total": 1,
+  "duplicates_dropped": 0,
+  "rate_limit_window_sec": 60.0,
+  "rate_limit_margin": 0.9,
+  "rate_limit_overrides": {}
+}

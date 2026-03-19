@@ -1,0 +1,8 @@
+{
+  "patient_name": "Patient_15",
+  "images_total": 1,
+  "ocr_ok": 0,
+  "ocr_fail": 1,
+  "duplicates_dropped": 0,
+  "total_elapsed_seconds": 0.4093715699855238
+}

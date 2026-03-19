@@ -1,0 +1,13 @@
+{
+  "total_pages": 104,
+  "official_pages": 64,
+  "non_official_pages": 40,
+  "accuracy": 1.0,
+  "precision": 1.0,
+  "recall": 1.0,
+  "f1": 1.0,
+  "tp": 64,
+  "tn": 40,
+  "fp": 0,
+  "fn": 0
+}

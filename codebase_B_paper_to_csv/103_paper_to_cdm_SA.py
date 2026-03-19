@@ -221,6 +221,48 @@ NIGHT_QUESTIONNAIRE_ROUTE_LABELS: Tuple[str, ...] = (
     "sleep_history",
 )
 
+DIRECT_ROUTE_KEYWORD_RULES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    (
+        MAP_ROUTE_CPAP_PSG_REPORT_EXTENSIVE,
+        (
+            "full night cpap polysomnography report",
+        ),
+    ),
+    (
+        MAP_ROUTE_PSG_REPORT_EXTENSIVE,
+        (
+            "night polysomnography report",
+        ),
+    ),
+    (
+        MAP_ROUTE_MORNING_QUESTIONNAIRE,
+        (
+            "아침 질문 사항",
+        ),
+    ),
+    (
+        MAP_ROUTE_NIGHT_QUESTIONNAIRE,
+        (
+            "병력과 가족력",
+            "수면 습관",
+            "생활 습관",
+            "Stanford Sleepiness Scale",
+            "Epworth Sleepiness Scale",
+            "Pittsburgh Sleep Quality Index",
+            "피로 정도에 대한 설문",
+            "Fatigue Severity Scale",
+            "Berlin Questionnaire",
+            "Insomnia Severity Index",
+            "하지불안증후군/주기성사지운동증후군",
+            "하지불안증후군에 대한 설문",
+            "우울증에 관한 설문",
+            "Beck Depression Inventory",
+            "삶의 질 척도",
+            "WHOQOL-BREF",
+        ),
+    ),
+)
+
 PSG_REPORT_HINT_PATTERNS: List[Tuple[re.Pattern, int, str]] = [
     (re.compile(r"신경과\s*수면검사|수면다원검사|polysomnography(?:\s+(?:data|report))?", re.I), 3, "psg_title"),
     (re.compile(r"\b(?:tst|ahi|rdi|sleep efficiency|sleep latency|rem latency|lowest\s*sao2|lowest\s*spo2)\b", re.I), 2, "psg_metrics"),
@@ -319,8 +361,52 @@ def prepare_ocr_text_for_router(ocr_text: str) -> str:
     return text
 
 
+def normalize_router_keyword_text(text: str) -> str:
+    raw = str(text or "").lower()
+    raw = re.sub(r"\s+", " ", raw)
+    return raw.strip()
+
+
+def detect_direct_route_keyword_match(ocr_text: str) -> Optional[Dict[str, Any]]:
+    normalized = normalize_router_keyword_text(ocr_text)
+    if not normalized:
+        return None
+    for route_name, phrases in DIRECT_ROUTE_KEYWORD_RULES:
+        hits = [phrase for phrase in phrases if normalize_router_keyword_text(phrase) in normalized]
+        if hits:
+            return {
+                "route": route_name,
+                "confidence": "high",
+                "direct_keyword_hits": hits,
+                "reason": "direct_keyword_router",
+            }
+    return None
+
+
 def classify_map_route_heuristic(ocr_text: str) -> Dict[str, Any]:
     text = prepare_ocr_text_for_router(ocr_text)
+    direct = detect_direct_route_keyword_match(text)
+    if direct:
+        return {
+            "route": direct["route"],
+            "confidence": direct["confidence"],
+            "signal_score": 0,
+            "cpap_score": 0,
+            "cpap_extensive_score": 0,
+            "report_score": 0,
+            "extensive_report_score": 0,
+            "morning_score": 0,
+            "night_score": 0,
+            "signal_hits": [],
+            "cpap_hits": [],
+            "cpap_extensive_hits": [],
+            "report_hits": [],
+            "extensive_report_hits": [],
+            "morning_hits": [],
+            "night_hits": [],
+            "direct_keyword_hits": list(direct.get("direct_keyword_hits") or []),
+            "reason": str(direct.get("reason") or "direct_keyword_router"),
+        }
     signal_score = 0
     report_score = 0
     extensive_report_score = 0
@@ -432,6 +518,7 @@ def classify_map_route_heuristic(ocr_text: str) -> Dict[str, Any]:
         "extensive_report_hits": extensive_report_hits,
         "morning_hits": morning_hits,
         "night_hits": night_hits,
+        "direct_keyword_hits": [],
         "reason": "heuristic_router",
     }
 
@@ -486,7 +573,8 @@ MAP_ROUTE_SYSTEM = """
 - authors: patients, not doctors or staffs.
 - title: '아침 질문' or 'morning questionnaire'
 - characteristic: asks questions comparing the patient's last psg night sleep to their home sleep.
-- cautions: Just because it has questions related to morning time, it's not necessarily a morning questionnaire. Just because it is titled as 'wake questionnaire', it's not necessarily a morning questionnaire.
+- cautions: Just because it has questions related to morning time, it's not necessarily a morning questionnaire. 
+- cautions: Just because it is titled as 'wake questionnaire', it's not necessarily a morning questionnaire.
 7) map_route_night_questionnaire
 - authors: patients, not doctors or staffs.
 - pre-condition: not fitting in any of the above 6 categories.
@@ -749,7 +837,39 @@ def _normalize_filled_by(v: Any) -> str:
 
 
 def _default_input_context() -> Dict[str, Any]:
-    return {"filled_by": "", "question": "", "page_type": "", "exactly_same": 0}
+    return {"filled_by": "", "question": "", "page_type": ""}
+
+
+OFFICIAL_QUESTIONNAIRE_RULE_PATTERNS: Dict[str, Tuple[str, ...]] = {
+    "MQ": ("아침 질문 사항",),
+    "SSS": ("Stanford Sleepiness Scale", "Stanford sleepiness scale"),
+    "ESS": ("The Epworth Sleepiness Scale", "Epworth Sleepiness Scale"),
+    "FSS": ("Fatigue Severity Scale", "피로 정도에 대한 설문"),
+    "BQ": ("Berlin Questionnaire",),
+    "ISI": ("Insomnia Severity Index", "불면증에 관한 설문", "불면증에 관한 질문"),
+    "RLS": ("하지불안증후군/주기성사지운동증후군", "Restless Legs Syndromes and PLMS questions"),
+    "IRLS": ("하지불안증후군에 대한 설문",),
+    "PSQI": ("수면의 질 지수", "Pittsburgh Sleep Quality Index", "PITTSBURGH SLEEP QUALITY INDEX"),
+    "BDI": ("우울증에 관한 설문", "Beck Depression Inventory", "Beck depression inventory"),
+    "QOL": ("삶의 질 척도", "WHOQOL-BREF"),
+}
+MULTIPAGE_OFFICIAL_FAMILIES: Tuple[str, ...] = ("PSQI", "BDI", "QOL")
+OFFICIAL_GENERIC_BREAK_PATTERNS: Tuple[str, ...] = (
+    "생활 습관",
+    "병력과 가족력",
+    "수면 습관",
+    "수면에 관한 설문지",
+    "수면다원검사 설문지",
+    r"POLYSOMNOGRAPHY\s*\|\s*QUESTIONNAIRE",
+    "SLEEP QUESTIONNAIRE",
+    "SLEEP - WAKE QUESTIONNAIRE",
+    "Living habit",
+)
+PSQI_PAGE2_CUE_PATTERNS: Tuple[str, ...] = (
+    r"During the past month,\s*how would you rate your sleep quality overall\?",
+    r"rate your sleep quality overall",
+    r"지난 한달 동안,\s*당신의 전반적인 수면의 질은 어떠하였습니까",
+)
 
 
 def _extract_page_type_from_text(text_like: Any) -> str:
@@ -798,12 +918,9 @@ def _normalize_input_context(ctx: Any) -> Dict[str, Any]:
         or ctx.get("prompt")
         or ctx.get("text")
     )
-    exactly_same_raw = ctx.get("exactly_same")
     out["filled_by"] = _normalize_filled_by(filled_by_raw)
     out["question"] = str(question_raw or "").strip()
     out["page_type"] = _extract_page_type_from_context(ctx)
-    iv = _coerce_int(exactly_same_raw)
-    out["exactly_same"] = 1 if iv == 1 else 0
     return out
 
 
@@ -811,7 +928,7 @@ def parse_value_context_map(obj: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[s
     """
     Normalize model output into:
       - values: key -> mapped value candidate
-      - contexts: key -> {filled_by, question, page_type, exactly_same}
+      - contexts: key -> {filled_by, question, page_type}
       - cdm_contexts: key -> string explaining what the CDM key is about
 
     Accepts both old format:
@@ -845,6 +962,92 @@ def parse_value_context_map(obj: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[s
         contexts[key] = _default_input_context()
         cdm_contexts[key] = ""
     return values, contexts, cdm_contexts
+
+
+def _type_a_official_family_prefix(key: str) -> str:
+    family_prefixes = (
+        "MQ_",
+        "SSS_",
+        "ESS_",
+        "FSS_",
+        "BQ_",
+        "ISI_",
+        "RLS_",
+        "IRLS_",
+        "RBDSQ_",
+        "PHQ_",
+        "BDI_",
+        "QOL_",
+        "PSQI_",
+    )
+    for prefix in family_prefixes:
+        if key.startswith(prefix):
+            return prefix
+    return ""
+
+
+def _ocr_text_matches_type_a_official_family(key: str, ocr_text: str) -> bool:
+    return True
+
+
+def classify_official_questionnaire_family(text: Any) -> str:
+    raw = str(text or "")
+    for family, patterns in OFFICIAL_QUESTIONNAIRE_RULE_PATTERNS.items():
+        for pattern in patterns:
+            if re.search(pattern, raw, flags=re.I):
+                return family
+    return "NON"
+
+
+def looks_like_official_generic_break(text: Any) -> bool:
+    raw = str(text or "")
+    return any(re.search(pattern, raw, flags=re.I) for pattern in OFFICIAL_GENERIC_BREAK_PATTERNS)
+
+
+def looks_like_psqi_page2(text: Any) -> bool:
+    raw = str(text or "")
+    return any(re.search(pattern, raw, flags=re.I) for pattern in PSQI_PAGE2_CUE_PATTERNS)
+
+
+def classify_official_questionnaire_sequence(
+    bundle_infos: List[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    active_family = "NON"
+    for info in bundle_infos:
+        bundle_name = str(info.get("bundle_name") or "").strip()
+        route_name = normalize_map_route_name(info.get("route_name"))
+        ocr_text = str(info.get("ocr_text") or "")
+        if route_name not in {MAP_ROUTE_NIGHT_QUESTIONNAIRE, MAP_ROUTE_MORNING_QUESTIONNAIRE}:
+            out[bundle_name] = {"official_questionnaire": False, "official_family": "NON"}
+            active_family = "NON"
+            continue
+
+        family = classify_official_questionnaire_family(ocr_text)
+        if family != "NON":
+            out[bundle_name] = {"official_questionnaire": True, "official_family": family}
+            active_family = family if family in MULTIPAGE_OFFICIAL_FAMILIES else "NON"
+            continue
+
+        if looks_like_official_generic_break(ocr_text):
+            out[bundle_name] = {"official_questionnaire": False, "official_family": "NON"}
+            active_family = "NON"
+            continue
+
+        if active_family == "PSQI":
+            if looks_like_psqi_page2(ocr_text):
+                out[bundle_name] = {"official_questionnaire": True, "official_family": "PSQI"}
+            else:
+                out[bundle_name] = {"official_questionnaire": False, "official_family": "NON"}
+                active_family = "NON"
+            continue
+
+        if active_family in {"BDI", "QOL"}:
+            out[bundle_name] = {"official_questionnaire": True, "official_family": active_family}
+            continue
+
+        out[bundle_name] = {"official_questionnaire": False, "official_family": "NON"}
+    return out
 
 
 def _coerce_int(v: Any) -> Optional[int]:
@@ -1545,6 +1748,185 @@ def apply_phx_default_rules(row: Dict[str, Any]) -> None:
             row[k] = iv
 
 
+CPAP_ROUTE_NAMES = {
+    MAP_ROUTE_CPAP_PSG_REPORT_GENERAL,
+    MAP_ROUTE_CPAP_PSG_REPORT_EXTENSIVE,
+}
+CPAP_PRESSURE_KEY_RE = re.compile(r"^Pressure_(\d{2})$")
+CPAP_PRESSURE_METRIC_KEY_RE = re.compile(r"^Pr(\d{2})_(.+)$")
+CPAP_SNORING_MISSING_TOKENS = {"-", "--", "—", "–"}
+CPAP_PRESSURE_CUE_PATTERNS: Tuple[re.Pattern[str], ...] = (
+    re.compile(r"^\s*(\d{1,2})\s*(?:/|\|)"),
+    re.compile(r"(?i)\bat\s+cpap\s+pressure\s*(\d{1,2})\s*cm\s*h2o\b"),
+    re.compile(r"(?i)\bcpap\s+pressure\s*(\d{1,2})\s*cm\s*h2o\b"),
+    re.compile(r"(?i)\bpressure\s*(\d{1,2})\s*cm\s*h2o\b"),
+)
+
+
+def _extract_cpap_pressure_cues(question: Any) -> List[int]:
+    text = str(question or "").strip()
+    if not text:
+        return []
+    steps: List[int] = []
+    for pat in CPAP_PRESSURE_CUE_PATTERNS:
+        for m in pat.finditer(text):
+            try:
+                step = int(m.group(1))
+            except Exception:
+                continue
+            if CPAP_PRESSURE_STEP_START <= step <= CPAP_PRESSURE_STEP_END and step not in steps:
+                steps.append(step)
+    return steps
+
+
+def _normalize_cpap_position_value(v: Any) -> Any:
+    s = normalize_value(v)
+    if s is None:
+        return None
+    s = re.sub(r"\s+", " ", str(s).strip())
+    return s.lower()
+
+
+def _normalize_cpap_stage_value(v: Any) -> Any:
+    s = normalize_value(v)
+    if s is None:
+        return None
+    text = re.sub(r"\s+", "", str(s).strip())
+    return re.sub(r"[A-Za-z]+", lambda m: m.group(0).lower(), text)
+
+
+def _normalize_cpap_snoring_value(v: Any) -> Any:
+    s = normalize_value(v)
+    if s is None:
+        return None
+    text = str(s).strip()
+    if text in CPAP_SNORING_MISSING_TOKENS:
+        return None
+    return text.lower()
+
+
+def _normalize_cpap_field_value(key: str, value: Any) -> Any:
+    if key.endswith("_position"):
+        return _normalize_cpap_position_value(value)
+    if key.endswith("_stage"):
+        return _normalize_cpap_stage_value(value)
+    if key.endswith("_snoring"):
+        return _normalize_cpap_snoring_value(value)
+    if CPAP_PRESSURE_KEY_RE.fullmatch(key):
+        iv = _coerce_int(value)
+        return iv if iv is not None else normalize_value(value)
+    return normalize_value(value)
+
+
+def _apply_cpap_output_rules(row: Dict[str, Any]) -> None:
+    for key in list(row.keys()):
+        pressure_m = CPAP_PRESSURE_KEY_RE.fullmatch(key)
+        metric_m = CPAP_PRESSURE_METRIC_KEY_RE.fullmatch(key)
+        if not pressure_m and not metric_m:
+            continue
+
+        row[key] = _normalize_cpap_field_value(key, row.get(key))
+
+        if pressure_m and not _is_missing_value(row.get(key)):
+            expected_step = int(pressure_m.group(1))
+            iv = _coerce_int(row.get(key))
+            row[key] = iv if iv == expected_step else None
+
+    for step in range(CPAP_PRESSURE_STEP_START, CPAP_PRESSURE_STEP_END + 1):
+        pos_k = f"Pr{step:02d}_position"
+        stage_k = f"Pr{step:02d}_stage"
+        pos_v = normalize_value(row.get(pos_k))
+        stage_v = normalize_value(row.get(stage_k))
+        if pos_v is None or stage_v is None:
+            continue
+        parts = str(pos_v).split()
+        if len(parts) < 2:
+            continue
+        trailing = parts[-1].lower()
+        if trailing not in {"w", "r", "1", "2", "3"}:
+            continue
+        base_position = " ".join(parts[:-1]).strip()
+        if not base_position:
+            continue
+        stage_tokens = [tok for tok in re.split(r"\s*,\s*", str(stage_v).strip()) if tok]
+        stage_tokens = [re.sub(r"[A-Za-z]+", lambda m: m.group(0).lower(), tok) for tok in stage_tokens]
+        if trailing not in stage_tokens:
+            stage_tokens.append(trailing)
+        row[pos_k] = base_position
+        row[stage_k] = ",".join(stage_tokens)
+
+
+def _apply_cpap_page_guardrails(
+    valid: Dict[str, Any],
+    raw_contexts: Dict[str, Dict[str, Any]],
+    rejected: Dict[str, Dict[str, Any]],
+) -> None:
+    supported_steps: set[int] = set()
+
+    for key, value in list(valid.items()):
+        m = CPAP_PRESSURE_KEY_RE.fullmatch(key)
+        if not m:
+            continue
+        step = int(m.group(1))
+        iv = _coerce_int(value)
+        if iv is None or iv != step:
+            ctx = _normalize_input_context(raw_contexts.get(key))
+            valid.pop(key, None)
+            rejected[key] = {
+                "value": value,
+                "reason": "cpap_pressure_value_mismatch",
+                "input_context": ctx,
+            }
+            continue
+        valid[key] = iv
+        supported_steps.add(step)
+
+    for key, value in list(valid.items()):
+        m = CPAP_PRESSURE_METRIC_KEY_RE.fullmatch(key)
+        if not m:
+            continue
+        step = int(m.group(1))
+        ctx = _normalize_input_context(raw_contexts.get(key))
+        cues = _extract_cpap_pressure_cues(ctx.get("question"))
+        if cues and step not in cues:
+            valid.pop(key, None)
+            rejected[key] = {
+                "value": value,
+                "reason": "cpap_pressure_row_mismatch",
+                "input_context": ctx,
+            }
+            continue
+        if cues and step in cues:
+            supported_steps.add(step)
+
+    for key, value in list(valid.items()):
+        m = CPAP_PRESSURE_METRIC_KEY_RE.fullmatch(key)
+        if not m:
+            continue
+        step = int(m.group(1))
+        ctx = _normalize_input_context(raw_contexts.get(key))
+        cues = _extract_cpap_pressure_cues(ctx.get("question"))
+        if not cues and step not in supported_steps:
+            valid.pop(key, None)
+            rejected[key] = {
+                "value": value,
+                "reason": "cpap_pressure_row_missing_evidence",
+                "input_context": ctx,
+            }
+            continue
+
+        norm = _normalize_cpap_field_value(key, value)
+        if norm is None and not _is_missing_value(value):
+            valid.pop(key, None)
+            rejected[key] = {
+                "value": value,
+                "reason": "cpap_placeholder_blank",
+                "input_context": ctx,
+            }
+            continue
+        valid[key] = norm
+
+
 def normalize_diagnosis_etc_value(v: Any) -> Optional[str]:
     nv = normalize_value(v)
     if nv is None:
@@ -1721,6 +2103,8 @@ class CDMRow:
     desc: str
     format_range: str
     options: Dict[str, str]  # code -> label
+    type_label: str = "B"
+    semantic_allowed: int = 1
 
 
 @dataclass
@@ -1795,12 +2179,28 @@ class CDMRetriever:
                 label = str(val).strip()
                 if label:
                     opts[str(c)] = label
+            semantic_allowed_raw = r.get("semantic_allowed", 1)
+            semantic_allowed = _coerce_int(semantic_allowed_raw)
+            if semantic_allowed not in {0, 1}:
+                semantic_allowed = 1
+            type_label = str(r.get("Type", "B") or "B").strip().upper()
+            if type_label not in {"A", "B"}:
+                type_label = "B"
 
-            row = CDMRow(key=key, desc=desc, format_range=fr, options=opts)
+            row = CDMRow(
+                key=key,
+                desc=desc,
+                format_range=fr,
+                options=opts,
+                type_label=type_label,
+                semantic_allowed=int(semantic_allowed),
+            )
             self.rows.append(row)
 
             opt_str = " | ".join([f"{code}:{label}" for code, label in sorted(opts.items(), key=lambda x: int(x[0]))])
-            self._texts.append(f"KEY={key}\nDESC={desc}\nFORMAT={fr}\nOPTIONS={opt_str}")
+            self._texts.append(
+                f"KEY={key}\nDESC={desc}\nTYPE={type_label}\nSEMANTIC_ALLOWED={int(semantic_allowed)}\nFORMAT={fr}\nOPTIONS={opt_str}"
+            )
         logger.info("Loaded full CDM rows: %d", len(self.rows))
 
         self.key_set = {r.key for r in self.rows}
@@ -1814,7 +2214,7 @@ class CDMRetriever:
         self.vectorizer = TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 5), min_df=1)
         self.matrix = self.vectorizer.fit_transform(self._texts)
         self._full_cdm_prompt_block = self._build_full_cdm_prompt_block()
-        self._route_prompt_blocks: Dict[str, str] = {}
+        self._route_prompt_blocks: Dict[Tuple[str, str], str] = {}
 
     def _expand_cpap_pressure_rows(self, df: pd.DataFrame) -> pd.DataFrame:
         key_col = "csv key"
@@ -1869,7 +2269,7 @@ class CDMRetriever:
     def full_cdm_prompt_block(self) -> str:
         return self._full_cdm_prompt_block
 
-    def route_rows(self, route_name: str) -> List["CDMRow"]:
+    def route_rows(self, route_name: str, official_questionnaire: Optional[bool] = None) -> List["CDMRow"]:
         route = str(route_name or DEFAULT_MAP_ROUTE).strip() or DEFAULT_MAP_ROUTE
         if route == MAP_ROUTE_PSG_SIGNALS:
             rows: List[CDMRow] = []
@@ -1883,19 +2283,35 @@ class CDMRetriever:
         if route in {MAP_ROUTE_CPAP_PSG_REPORT_GENERAL, MAP_ROUTE_CPAP_PSG_REPORT_EXTENSIVE}:
             return [row for row, _ in self.select_candidate_rows_for_labels(["psg_report", "cpap_pressure"])]
         if route == MAP_ROUTE_MORNING_QUESTIONNAIRE:
-            return [row for row, _ in self.select_candidate_rows_for_labels(list(MORNING_QUESTIONNAIRE_ROUTE_LABELS))]
+            rows = [row for row, _ in self.select_candidate_rows_for_labels(list(MORNING_QUESTIONNAIRE_ROUTE_LABELS))]
+            return self._filter_questionnaire_rows_by_type(rows, official_questionnaire)
         if route == MAP_ROUTE_NIGHT_QUESTIONNAIRE:
-            return [row for row, _ in self.select_candidate_rows_for_labels(list(NIGHT_QUESTIONNAIRE_ROUTE_LABELS))]
+            rows = [row for row, _ in self.select_candidate_rows_for_labels(list(NIGHT_QUESTIONNAIRE_ROUTE_LABELS))]
+            return self._filter_questionnaire_rows_by_type(rows, official_questionnaire)
         return list(self.rows)
 
-    def prompt_block_for_route(self, route_name: str) -> str:
+    def _filter_questionnaire_rows_by_type(
+        self,
+        rows: List["CDMRow"],
+        official_questionnaire: Optional[bool],
+    ) -> List["CDMRow"]:
+        if official_questionnaire is None:
+            return list(rows)
+        want_type = "A" if bool(official_questionnaire) else "B"
+        return [row for row in rows if str(getattr(row, "type_label", "B") or "B").upper() == want_type]
+
+    def prompt_block_for_route(self, route_name: str, official_questionnaire: Optional[bool] = None) -> str:
         route = str(route_name or DEFAULT_MAP_ROUTE).strip() or DEFAULT_MAP_ROUTE
-        cached = self._route_prompt_blocks.get(route)
+        cache_key = (route, "any" if official_questionnaire is None else ("official" if official_questionnaire else "non_official"))
+        cached = self._route_prompt_blocks.get(cache_key)
         if cached:
             return cached
-        rows = self.route_rows(route)
-        block = format_candidate_rows([(row, 1.0) for row in rows], include_score=False, max_chars=50000)
-        self._route_prompt_blocks[route] = block
+        rows = self.route_rows(route, official_questionnaire=official_questionnaire)
+        if route in {MAP_ROUTE_CPAP_PSG_REPORT_GENERAL, MAP_ROUTE_CPAP_PSG_REPORT_EXTENSIVE}:
+            block = format_cpap_candidate_rows_compact(rows, max_chars=50000)
+        else:
+            block = format_candidate_rows([(row, 1.0) for row in rows], include_score=False, max_chars=50000)
+        self._route_prompt_blocks[cache_key] = block
         return block
 
     def _build_document_label_rows(self) -> Dict[str, List["CDMRow"]]:
@@ -2001,6 +2417,73 @@ def _clip_prompt_text(s: str, max_len: int) -> str:
     return s[: max_len - 1] + "…"
 
 
+def format_cpap_candidate_rows_compact(
+    rows: List[CDMRow],
+    max_chars: int = 50000,
+) -> str:
+    non_cpap_rows: List[Tuple[CDMRow, float]] = []
+    cpap_proto_rows: List[Tuple[CDMRow, float]] = []
+    cpap_family_rows: List[CDMRow] = []
+    for row in rows:
+        if row.key == "Pressure_05" or row.key.startswith("Pr05_"):
+            cpap_proto_rows.append((row, 1.0))
+        elif re.fullmatch(r"Pressure_\d{2}|Pr\d{2}_.+", row.key):
+            cpap_family_rows.append(row)
+        else:
+            non_cpap_rows.append((row, 1.0))
+
+    explicit_block = format_candidate_rows(
+        non_cpap_rows + cpap_proto_rows,
+        include_score=False,
+        max_chars=max_chars,
+    )
+    if not cpap_family_rows:
+        return explicit_block
+
+    pressure_proto = next((r for r, _ in cpap_proto_rows if r.key == "Pressure_05"), None)
+    pr_protos = [r for r, _ in cpap_proto_rows if r.key.startswith("Pr05_")]
+    pr_protos.sort(key=lambda r: r.key)
+
+    lines: List[str] = []
+    lines.append("CPAP pressure-step key family:")
+    lines.append(
+        f"- Allowed pressure steps in this summary: {CPAP_PRESSURE_STEP_START + 1:02d} to {CPAP_PRESSURE_STEP_END:02d}"
+    )
+    lines.append("- Pressure_05 and all Pr05_* keys are already listed explicitly above.")
+    lines.append(f"- Apply the same key pattern to every visible pressure step from {CPAP_PRESSURE_STEP_START + 1:02d} through the allowed maximum.")
+    lines.append("- If later pressure rows are visible, continue the pattern instead of stopping at early steps.")
+    lines.append("- Allowed template keys for each pressure step XX:")
+    if pressure_proto is not None:
+        lines.append(
+            f"  - Pressure_XX | desc={_clip_prompt_text(pressure_proto.desc, 120)} | "
+            f"type={getattr(pressure_proto, 'type_label', 'B')} | "
+            f"semantic_allowed={int(getattr(pressure_proto, 'semantic_allowed', 1))} | "
+            f"format={_clip_prompt_text(pressure_proto.format_range, 60)}"
+        )
+    for proto in pr_protos:
+        suffix = proto.key[len('Pr05_'):]
+        opt_items = sorted(proto.options.items(), key=lambda x: int(x[0]))
+        opt_str = ", ".join([f"{code}={label}" for code, label in opt_items])
+        lines.append(
+            f"  - PrXX_{suffix} | desc={_clip_prompt_text(proto.desc, 120)} | "
+            f"type={getattr(proto, 'type_label', 'B')} | "
+            f"semantic_allowed={int(getattr(proto, 'semantic_allowed', 1))} | "
+            f"format={_clip_prompt_text(proto.format_range, 60)} | "
+            f"options={_clip_prompt_text(opt_str, 120)}"
+        )
+    lines.append(
+        f"- Example concrete keys in this summary: Pressure_{CPAP_PRESSURE_STEP_START + 1:02d}, Pr{CPAP_PRESSURE_STEP_START + 1:02d}_AHI, "
+        f"Pressure_{CPAP_PRESSURE_STEP_START + 2:02d}, Pr{CPAP_PRESSURE_STEP_START + 2:02d}_time_min, ..., "
+        f"Pressure_{CPAP_PRESSURE_STEP_END:02d}, Pr{CPAP_PRESSURE_STEP_END:02d}_arousal_spont_idx"
+    )
+    cpap_block = "\n".join(lines)
+    if explicit_block:
+        combined = explicit_block.rstrip() + "\n\n" + cpap_block
+    else:
+        combined = cpap_block
+    return combined[:max_chars]
+
+
 def format_candidate_rows(
     cands: List[Tuple[CDMRow, float]],
     max_chars: int = 26000,
@@ -2012,9 +2495,13 @@ def format_candidate_rows(
     for row, score in cands:
         opt_items = sorted(row.options.items(), key=lambda x: int(x[0]))
         opt_str = ", ".join([f"{code}={label}" for code, label in opt_items])
+        type_str = f"type={getattr(row, 'type_label', 'B')}"
+        semantic_str = f"semantic_allowed={int(getattr(row, 'semantic_allowed', 1))}"
         if compact:
             block = (
                 f"- {row.key} | desc={_clip_prompt_text(row.desc, 80)} | "
+                f"{type_str} | "
+                f"{semantic_str} | "
                 f"format={_clip_prompt_text(row.format_range, 40)} | "
                 f"options={_clip_prompt_text(opt_str, 180)}\n"
             )
@@ -2022,6 +2509,8 @@ def format_candidate_rows(
             block = (
                 f"- {row.key}\n"
                 f"  desc: {_clip_prompt_text(row.desc, 220)}\n"
+                f"  type: {getattr(row, 'type_label', 'B')}\n"
+                f"  semantic_allowed: {int(getattr(row, 'semantic_allowed', 1))}\n"
                 f"  format/range: {_clip_prompt_text(row.format_range, 80)}\n"
                 f"  options: {_clip_prompt_text(opt_str, 260)}\n"
             )
@@ -2034,9 +2523,14 @@ def format_candidate_rows(
     return "\n".join(parts)
 
 
-def build_map_agent_specs(retriever: CDMRetriever, num_agents: int, route_name: str = DEFAULT_MAP_ROUTE) -> List[MapAgentSpec]:
+def build_map_agent_specs(
+    retriever: CDMRetriever,
+    num_agents: int,
+    route_name: str = DEFAULT_MAP_ROUTE,
+    official_questionnaire: Optional[bool] = None,
+) -> List[MapAgentSpec]:
     n_agents = max(1, int(num_agents))
-    route_rows = retriever.route_rows(route_name)
+    route_rows = retriever.route_rows(route_name, official_questionnaire=official_questionnaire)
     total = len(route_rows)
     if total == 0:
         return []
@@ -2083,6 +2577,8 @@ OCR_SYSTEM = """
 - Use '[crossed out]' when text is visibly struck through or crossed out.
 - Use '[unclear]' when the content/selection is unclear.
 - Use '[not filled/answered]' when a visible blank answer field is clearly intended and relevant.
+- Special case: For medical history checklist with '그 외 다음과 같은 질환을 앓고 있거나 과거에 앓은 적이 있습니까', use '[No]' for unmarked conditions and '[Yes]' for marked conditions.
+    e.g., 뇌졸중 [No], 파킨슨씨 병 [No], ..., 공황장애 [Yes], 자살시도 [No]
 - Special case: if the page primarily contains polysomnography channel signal graphs/tracings, prepend the exact line 'This page contains psg signal graphs.' before the rest of the transcription. This note is allowed even though it is not literal page text.
 
 # Output format
@@ -2106,7 +2602,11 @@ You will get two inputs:
     - Read the provided OCR text line by line.
     - Based on the candidate cdm keys provided and the OCR text, find the EXACT CDM key that the Korean_Context/English_Context has the exactly same wordings or meaning when comparing to the OCR text.
         * Note: For official questionnaire cases, being semantically same is NOT sufficient. Each wording should be the same for these cases.
-                e.g., PSQI, ESS, SSS, FSS, BQ, ISI, RLS, IRLS, RBDSQ, PHQ, BDI, QOL, MQ
+            e.g., PSQI, ESS, SSS, FSS, BQ, ISI, RLS, IRLS, RBDSQ, PHQ, BDI, QOL, MQ
+        * Note: Each candidate includes `semantic_allowed`.
+            - If `semantic_allowed = 0`, direct wording equivalence or direct official-item identity is required. Do not map from merely similar wording or broad summaries.
+            - If `semantic_allowed = 1`, semantic matching is allowed, but only when the OCR evidence directly supports the same clinical meaning.
+            - Use this field conservatively to avoid over-mapping.
 3. CDM VALUE
     - For the correct key, fill a value following the candidate field format/range/options exactly.
         - e.g., answer can be scaled as yes: 1, no:2, but cdm might require no:0, yes:1
@@ -2128,6 +2628,12 @@ You will get two inputs:
             - Normalize occupation to Korean wording when possible.
             - if CDM options exist for the occupation, map to the correct option code.
             - if OCR answer indicates job-seeking/leave (e.g., 취준, 취업준비, 휴직), omit Occupation.
+        - PHx, Medical History Sections
+            - PHx_* keys must come only from the explicit medical-history checklist/list on the page.
+            - Do not infer PHx_* from diagnosis summary, medication list, free-text complaint, or family history.
+            - If a PHx condition is visibly listed and marked/checked, output 1.
+            - If a PHx condition is visibly listed and unmarked/not checked, output 0.
+            - If the condition is not visible on the page, omit the key.
         - Diagnosis_etc:
             - 1st Position: `II. Diagnosis` section after `I. Result`.
             - 2nd Position: Before `III. Conclusion and Recommendation`.
@@ -2140,9 +2646,6 @@ You will get two inputs:
     - Context is used by later resolver agent to resolve between multiple values of the same CDM key.
     - 'filled_by': doctor for diagnosis and diagnostic report, patient when self-reported questionnaire.
     - 'question': The one sentence - exact question/context that matches to the CDM key in OCR text.
-    - 'exactly_same': 1 only when the chosen CDM key's question/context and the copied source question/context are essentially the same questionnaire/report item with the same wording; otherwise 0.
-        - Use 1 for the exact questionnaire item itself.
-        - Use 0 for nearby summaries, shorthand notes, inferred descriptions, or broader section labels.
 
 # Caution
 - OCR text -> CDM Keys
@@ -2160,8 +2663,7 @@ Output JSON object only. Return ONE JSON object that maps CDM keys to objects wi
     "value": <value>,
     "input_context": {
       "filled_by": "doctor|patient",
-      "question": "<one sentence - exact question/context that matches to the CDM key in OCR text>",
-      "exactly_same": 0|1
+      "question": "<one sentence - exact question/context that matches to the CDM key in OCR text>"
     }
   }
 }
@@ -2300,8 +2802,16 @@ async def gemini_map_to_json(
     ocr_text: str,
     candidates_block: str,
     route_name: str = DEFAULT_MAP_ROUTE,
+    official_questionnaire: bool = False,
+    official_family: str = "NON",
 ) -> Dict[str, Any]:
-    user = build_map_user_prompt(ocr_text, candidates_block, route_name=route_name)
+    user = build_map_user_prompt(
+        ocr_text,
+        candidates_block,
+        route_name=route_name,
+        official_questionnaire=official_questionnaire,
+        official_family=official_family,
+    )
     msg = [
         SystemMessage(content=MAP_SYSTEM),
         HumanMessage(content=user),
@@ -2329,8 +2839,17 @@ async def gemini_map_additional_json(
     candidates_block: str,
     existing_json: Dict[str, Any],
     route_name: str = DEFAULT_MAP_ROUTE,
+    official_questionnaire: bool = False,
+    official_family: str = "NON",
 ) -> Dict[str, Any]:
-    user = build_map_recall_user_prompt(ocr_text, candidates_block, existing_json, route_name=route_name)
+    user = build_map_recall_user_prompt(
+        ocr_text,
+        candidates_block,
+        existing_json,
+        route_name=route_name,
+        official_questionnaire=official_questionnaire,
+        official_family=official_family,
+    )
     msg = [
         SystemMessage(content=MAP_RECALL_SYSTEM),
         HumanMessage(content=user),
@@ -2381,9 +2900,13 @@ def merge_map_payload_into_stage(
     stage_contexts: Dict[str, Dict[str, str]],
     stage_cdm_contexts: Dict[str, str],
     stage_rejected: Dict[str, Dict[str, Any]],
+    official_questionnaire: bool = False,
+    official_family: str = "NON",
 ) -> None:
     raw_values, raw_contexts, raw_cdm_contexts = parse_value_context_map(raw_payload)
     add_valid, add_rejected = validate_extracted_json(raw_values, retriever, ocr_text=ocr_text)
+    if route_name in CPAP_ROUTE_NAMES:
+        _apply_cpap_page_guardrails(add_valid, raw_contexts, add_rejected)
 
     for k, v in raw_payload.items():
         stage_raw.setdefault(k, v)
@@ -2391,6 +2914,30 @@ def merge_map_payload_into_stage(
         stage_rejected.setdefault(k, meta)
 
     for k, v in add_valid.items():
+        row = retriever.row_by_key.get(k)
+        ctx = _normalize_input_context(raw_contexts.get(k))
+        if row is not None and route_name in {MAP_ROUTE_NIGHT_QUESTIONNAIRE, MAP_ROUTE_MORNING_QUESTIONNAIRE}:
+            row_type = str(getattr(row, "type_label", "B") or "B").upper()
+            if row_type == "A" and not official_questionnaire:
+                stage_rejected.setdefault(
+                    k,
+                    {
+                        "value": v,
+                        "reason": "type_a_requires_official_questionnaire_page_tag",
+                        "input_context": ctx,
+                    },
+                )
+                continue
+            if row_type == "B" and official_questionnaire:
+                stage_rejected.setdefault(
+                    k,
+                    {
+                        "value": v,
+                        "reason": "type_b_requires_non_official_questionnaire_page_tag",
+                        "input_context": ctx,
+                    },
+                )
+                continue
         if k in stage_valid:
             if _norm_cmp(stage_valid.get(k)) != _norm_cmp(v):
                 logger.debug(
@@ -2401,10 +2948,8 @@ def merge_map_payload_into_stage(
                 )
             continue
         stage_valid[k] = v
-        ctx = _normalize_input_context(raw_contexts.get(k))
         ctx["page_type"] = normalize_map_route_name(ctx.get("page_type") or route_name)
         stage_contexts[k] = ctx
-        row = retriever.row_by_key.get(k)
         stage_cdm_contexts[k] = str(raw_cdm_contexts.get(k) or (row.desc if row is not None else "")).strip()
 
 
@@ -2559,7 +3104,6 @@ def build_conflict_resolver_user_prompt(
                     "cdm_context": str(e.get("cdm_context") or (row.desc if row is not None else "")).strip(),
                     "value": e.get("value"),
                     "question": _clip_prompt_text(ctx.get("question", ""), 260),
-                    "exactly_same": 1 if _coerce_int(ctx.get("exactly_same")) == 1 else 0,
                     "page_type": page_type,
                 }
             )
@@ -2602,7 +3146,7 @@ def build_conflict_count_dataframe(
 ) -> pd.DataFrame:
     """
     Build a single conflict vote table:
-      CDM_KEY, value, count, input_context.question(list), exactly_same_count
+      CDM_KEY, value, count, input_context.question(list)
     Group identity:
       (CDM_KEY, normalized value token)
     """
@@ -2617,7 +3161,6 @@ def build_conflict_count_dataframe(
                     "value": norm_value,
                     "value_token": _value_token(norm_value),
                     "input_context.question": str(ctx.get("question") or "").strip(),
-                    "input_context.exactly_same": 1 if _coerce_int(ctx.get("exactly_same")) == 1 else 0,
                 }
             )
     if not rows:
@@ -2627,7 +3170,6 @@ def build_conflict_count_dataframe(
                 "value",
                 "count",
                 "input_context.question",
-                "input_context.exactly_same_count",
             ]
         )
 
@@ -2638,15 +3180,13 @@ def build_conflict_count_dataframe(
             value=("value", "first"),
             count=("value_token", "size"),
             **{"input_context.question": ("input_context.question", _dedupe_question_list)},
-            **{"input_context.exactly_same_count": ("input_context.exactly_same", "sum")},
         )
         .reset_index(drop=True)
     )
     grouped["count"] = grouped["count"].astype(int)
-    grouped["input_context.exactly_same_count"] = grouped["input_context.exactly_same_count"].astype(int)
     grouped = grouped.sort_values(
-        ["CDM_KEY", "input_context.exactly_same_count", "count"],
-        ascending=[True, False, False],
+        ["CDM_KEY", "count"],
+        ascending=[True, False],
         kind="stable",
     ).reset_index(drop=True)
     return grouped[
@@ -2655,7 +3195,6 @@ def build_conflict_count_dataframe(
             "value",
             "count",
             "input_context.question",
-            "input_context.exactly_same_count",
         ]
     ]
 
@@ -2685,12 +3224,8 @@ def _unique_argmax_token(counts: Dict[str, int]) -> Optional[str]:
 def _pick_entry_index_by_token(
     entries: List[Dict[str, Any]],
     chosen_token: str,
-    require_exactly_same: bool = False,
 ) -> Optional[int]:
     for idx, e in enumerate(entries):
-        ctx = _normalize_input_context(e.get("input_context"))
-        if require_exactly_same and _coerce_int(ctx.get("exactly_same")) != 1:
-            continue
         if _value_token(normalize_value(e.get("value"))) == chosen_token:
             return idx
     return None
@@ -2718,24 +3253,19 @@ def resolve_conflicts_by_majority_vote(
             pending[key] = entries
             continue
 
-        exact_entries = [
-            e for e in entries
-            if _coerce_int(_normalize_input_context(e.get("input_context")).get("exactly_same")) == 1
-        ]
-        exact_df = key_df[key_df["input_context.exactly_same_count"] > 0]
-        majority_df = exact_df if not exact_df.empty else key_df
-        majority_entries = exact_entries if exact_entries else entries
+        majority_df = key_df
+        majority_entries = entries
         unique_tokens = majority_df["value_token"].dropna().astype(str).unique().tolist()
         chosen_token: Optional[str] = None
         rule_used = ""
 
         if len(unique_tokens) == 1:
             chosen_token = unique_tokens[0]
-            rule_used = "exact_match_subset_single_unique_value" if not exact_df.empty else "single_unique_value"
+            rule_used = "single_unique_value"
         else:
             counts = _token_count_map(majority_df)
             chosen_token = _unique_argmax_token(counts)
-            rule_used = "exact_match_subset_majority" if not exact_df.empty else "overall_majority"
+            rule_used = "overall_majority"
 
         if not chosen_token:
             pending[key] = majority_entries
@@ -2744,7 +3274,6 @@ def resolve_conflicts_by_majority_vote(
         idx = _pick_entry_index_by_token(
             entries=entries,
             chosen_token=chosen_token,
-            require_exactly_same=bool(exact_entries),
         )
         if idx is None:
             pending[key] = majority_entries
@@ -2767,8 +3296,6 @@ def resolve_conflicts_by_majority_vote(
                 {
                     "value": vote_value,
                     "count": int(row.get("count", 0) or 0),
-                    "exactly_same_count": int(row.get("input_context.exactly_same_count", 0) or 0),
-                    "used_for_majority": bool(not exact_df.empty and int(row.get("input_context.exactly_same_count", 0) or 0) > 0) or bool(exact_df.empty),
                     "question": question_list,
                 }
             )
@@ -2846,7 +3373,6 @@ def build_single_conflict_payload(
                 "cdm_context": str(e.get("cdm_context") or (row.desc if row is not None else "")).strip(),
                 "value": e.get("value"),
                 "question": _clip_prompt_text(ctx.get("question", ""), 260),
-                "exactly_same": 1 if _coerce_int(ctx.get("exactly_same")) == 1 else 0,
                 "page_type": page_type,
             }
         )
@@ -3040,25 +3566,25 @@ async def resolve_conflicts_with_llm(
     return overrides, decisions
 
 
-def build_map_user_prompt(ocr_text: str, candidates_block: str, route_name: str = DEFAULT_MAP_ROUTE) -> str:
-    label_catalog = build_document_label_catalog_text()
-    route = str(route_name or DEFAULT_MAP_ROUTE).strip() or DEFAULT_MAP_ROUTE
-    route_desc = MAP_ROUTE_DESCRIPTIONS.get(route, MAP_ROUTE_DESCRIPTIONS[DEFAULT_MAP_ROUTE])
+def build_map_user_prompt(
+    ocr_text: str,
+    candidates_block: str,
+    route_name: str = DEFAULT_MAP_ROUTE,
+    official_questionnaire: bool = False,
+    official_family: str = "NON",
+) -> str:
+    page_tag = "official_questionnaire" if official_questionnaire else "non_official_questionnaire"
     return f"""OCR TEXT:
 \"\"\"{ocr_text[:12000]}\"\"\"
 
-INTERNAL DOCUMENT/QUESTIONNAIRE TYPE CATALOG (use for internal categorization only; do not output labels):
-{label_catalog}
-
-PRE-CLASSIFIED PAGE ROUTE:
-- route: {route}
-- meaning: {route_desc}
-- Use this route as strong guidance when deciding which keys are relevant.
+PAGE QUESTIONNAIRE TAG:
+- tag: {page_tag}
+- family: {official_family}
 
 CANDIDATE CDM FIELDS (use ONLY these keys):
 {candidates_block}
 
-First internally categorize the OCR text using the catalog above, then map only keys that fit the relevant document/questionnaire types.
+Map only keys that are directly supported by the OCR text and fit the candidate CDM fields shown below.
 Extract as many clearly supported keys as possible.
 Return ONE JSON object only.
 
@@ -3069,8 +3595,7 @@ Output schema reminder:
     "value": <value>,
     "input_context": {{
       "filled_by": "doctor|patient",
-      "question": "<one sentence - exact question/context that matches to the CDM key in OCR text>",
-      "exactly_same": 0
+      "question": "<one sentence - exact question/context that matches to the CDM key in OCR text>"
     }}
   }}
 }}"""
@@ -3081,28 +3606,24 @@ def build_map_recall_user_prompt(
     candidates_block: str,
     existing_json: Dict[str, Any],
     route_name: str = DEFAULT_MAP_ROUTE,
+    official_questionnaire: bool = False,
+    official_family: str = "NON",
 ) -> str:
-    label_catalog = build_document_label_catalog_text()
-    route = str(route_name or DEFAULT_MAP_ROUTE).strip() or DEFAULT_MAP_ROUTE
-    route_desc = MAP_ROUTE_DESCRIPTIONS.get(route, MAP_ROUTE_DESCRIPTIONS[DEFAULT_MAP_ROUTE])
+    page_tag = "official_questionnaire" if official_questionnaire else "non_official_questionnaire"
     return f"""OCR TEXT:
 \"\"\"{ocr_text[:12000]}\"\"\"
+
+PAGE QUESTIONNAIRE TAG:
+- tag: {page_tag}
+- family: {official_family}
 
 EXISTING JSON (do not repeat these keys):
 {json.dumps(existing_json, ensure_ascii=False)}
 
-INTERNAL DOCUMENT/QUESTIONNAIRE TYPE CATALOG (use for internal categorization only; do not output labels):
-{label_catalog}
-
-PRE-CLASSIFIED PAGE ROUTE:
-- route: {route}
-- meaning: {route_desc}
-- Use this route as strong guidance when deciding which keys are relevant.
-
 CANDIDATE CDM FIELDS (use ONLY these keys):
 {candidates_block}
 
-First internally categorize the OCR text using the catalog above, then add only keys that fit the relevant document/questionnaire types.
+Add only additional keys that are directly supported by the OCR text and fit the candidate CDM fields shown below.
 Return ONLY additional key-value pairs as ONE JSON object.
 
 Output schema reminder:
@@ -3112,8 +3633,7 @@ Output schema reminder:
     "value": <value>,
     "input_context": {{
       "filled_by": "doctor|patient",
-      "question": "<one sentence - exact question/context that matches to the CDM key in OCR text>",
-      "exactly_same": 0
+      "question": "<one sentence - exact question/context that matches to the CDM key in OCR text>"
     }}
   }}
 }}"""
@@ -3430,6 +3950,7 @@ def build_output_row(merged: Dict[str, Any], output_columns: List[str]) -> Dict[
     apply_psqi_format_and_time_rules(row)
     apply_morning_questionnaire_time_rules(row)
     apply_phx_default_rules(row)
+    _apply_cpap_output_rules(row)
 
     if "Diagnosis_etc" in row:
         row["Diagnosis_etc"] = normalize_diagnosis_etc_value(row.get("Diagnosis_etc"))
