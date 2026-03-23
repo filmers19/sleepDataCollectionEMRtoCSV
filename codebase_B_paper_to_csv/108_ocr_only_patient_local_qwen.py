@@ -112,21 +112,9 @@ def prepare_ocr_image(
     auto_rotate_landscape: bool,
     aspect_ratio_threshold: float,
 ) -> Tuple[Path, bool]:
-    if not auto_rotate_landscape:
-        return image_path, False
-
-    img = load_oriented_rgb_image(image_path)
-    if not should_rotate_landscape(img.width, img.height, aspect_ratio_threshold):
-        return image_path, False
-
-    if prepared_dir is None:
-        raise RuntimeError("prepared_dir is required when auto_rotate_landscape is enabled")
-
-    prepared_dir.mkdir(parents=True, exist_ok=True)
-    prepared_path = prepared_dir / f"{image_path.stem}__rotated_cw.jpg"
-    rotated = img.rotate(-90, expand=True)
-    rotated.save(prepared_path, format="JPEG", quality=95)
-    return prepared_path, True
+    # Keep OCR input exactly as provided. Automatic orientation correction was removed
+    # because aspect-ratio-based rotation is not reliable enough for these pages.
+    return image_path, False
 
 
 class LocalDeepSeekVLV2OCR:
@@ -747,7 +735,6 @@ class RemoteGeminiOCR:
 async def run(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir).resolve()
     configure_logging(output_dir=output_dir, debug=args.debug)
-    prepared_image_dir = (output_dir / "prepared_images") if args.auto_rotate_landscape else None
 
     pipeline_mod = load_module(resolve_script_path(args.pipeline_script), "paper_to_cdm_sa_ocr_only")
     if callable(getattr(pipeline_mod, "load_env", None)):
@@ -784,8 +771,6 @@ async def run(args: argparse.Namespace) -> None:
         "max_inflight": args.max_inflight,
         "concurrency": args.concurrency,
         "image_max_side": args.image_max_side,
-        "auto_rotate_landscape": args.auto_rotate_landscape,
-        "auto_rotate_landscape_ratio": args.auto_rotate_landscape_ratio,
         "request_timeout_sec": args.request_timeout_sec,
         "max_retries": args.max_retries,
         "disable_dedup": args.disable_dedup,
@@ -871,9 +856,9 @@ async def run(args: argparse.Namespace) -> None:
             try:
                 ocr_image_path, auto_rotated = prepare_ocr_image(
                     image_path=img,
-                    prepared_dir=prepared_image_dir,
-                    auto_rotate_landscape=args.auto_rotate_landscape,
-                    aspect_ratio_threshold=args.auto_rotate_landscape_ratio,
+                    prepared_dir=None,
+                    auto_rotate_landscape=False,
+                    aspect_ratio_threshold=0.0,
                 )
                 if use_openai_responses or use_gemini_api or use_deepseek_vl2:
                     text = await backend.aocr(
@@ -989,17 +974,6 @@ def parse_args() -> argparse.Namespace:
         help="Enable Qwen thinking mode instead of the default non-thinking OCR baseline.",
     )
     ap.add_argument("--image_max_side", type=int, default=2048)
-    ap.add_argument(
-        "--auto_rotate_landscape",
-        action="store_true",
-        help="Rotate a page 90 degrees clockwise before OCR when width/height meets the threshold.",
-    )
-    ap.add_argument(
-        "--auto_rotate_landscape_ratio",
-        type=float,
-        default=1.05,
-        help="Rotate before OCR when width/height is greater than or equal to this value.",
-    )
     ap.add_argument("--max_new_tokens", type=int, default=3072)
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--top_p", type=float, default=0.95)

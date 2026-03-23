@@ -1824,7 +1824,6 @@ async def run(args: argparse.Namespace) -> None:
     ocr_page_dir.mkdir(parents=True, exist_ok=True)
     if args.pipeline_mode != "ocr_only":
         map_page_dir.mkdir(parents=True, exist_ok=True)
-    prepared_image_dir = (output_dir / "prepared_images") if args.auto_rotate_landscape else None
 
     map_agent_count = max(1, int(args.map_agent_count))
     map_agent_count_by_route = build_map_agent_count_by_route(args, pipeline_mod)
@@ -2016,9 +2015,9 @@ async def run(args: argparse.Namespace) -> None:
                     assert ocr_backend is not None
                     ocr_image_path, auto_rotated = ocr_mod.prepare_ocr_image(
                         image_path=img,
-                        prepared_dir=prepared_image_dir,
-                        auto_rotate_landscape=args.auto_rotate_landscape,
-                        aspect_ratio_threshold=args.auto_rotate_landscape_ratio,
+                        prepared_dir=None,
+                        auto_rotate_landscape=False,
+                        aspect_ratio_threshold=0.0,
                     )
                     best_attempt: Optional[Dict[str, Any]] = None
                     last_exc: Optional[Exception] = None
@@ -2513,8 +2512,6 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--rate_limit_window_sec", type=float, default=60.0)
     ap.add_argument("--rate_limit_margin", type=float, default=0.9)
-    ap.add_argument("--auto_rotate_landscape", action="store_true")
-    ap.add_argument("--auto_rotate_landscape_ratio", type=float, default=1.05)
     ap.add_argument("--disable_dedup", action="store_true")
     ap.add_argument("--near_dup_hamming", type=int, default=6)
     ap.add_argument("--save_intermediate", action="store_true")

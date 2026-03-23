@@ -618,7 +618,6 @@ async def run(args: argparse.Namespace) -> None:
     map_page_dir = output_dir / "map_pages"
     ocr_page_dir.mkdir(parents=True, exist_ok=True)
     map_page_dir.mkdir(parents=True, exist_ok=True)
-    prepared_image_dir = (output_dir / "prepared_images") if args.auto_rotate_landscape else None
 
     plan = {
         "patient_name": args.patient_name,
@@ -638,8 +637,6 @@ async def run(args: argparse.Namespace) -> None:
         "disable_conflict_resolver": args.disable_conflict_resolver,
         "reuse_ocr_dir": str(reuse_ocr_dir) if reuse_ocr_dir is not None else "",
         "image_max_side": args.image_max_side,
-        "auto_rotate_landscape": args.auto_rotate_landscape,
-        "auto_rotate_landscape_ratio": args.auto_rotate_landscape_ratio,
         "ocr_concurrency": args.ocr_concurrency,
         "map_concurrency": args.map_concurrency,
         "images_total": len(images),
@@ -709,9 +706,9 @@ async def run(args: argparse.Namespace) -> None:
                 else:
                     ocr_image_path, auto_rotated = ocr_mod.prepare_ocr_image(
                         image_path=img,
-                        prepared_dir=prepared_image_dir,
-                        auto_rotate_landscape=args.auto_rotate_landscape,
-                        aspect_ratio_threshold=args.auto_rotate_landscape_ratio,
+                        prepared_dir=None,
+                        auto_rotate_landscape=False,
+                        aspect_ratio_threshold=0.0,
                     )
                     text = await ocr_backend.aocr(
                         image_path=ocr_image_path,
@@ -962,8 +959,6 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--map_json_retry_attempts", type=int, default=3, help="Full regeneration attempts for malformed/incomplete map JSON")
     ap.add_argument("--resolver_json_retry_attempts", type=int, default=2, help="Full regeneration attempts for malformed/incomplete conflict-resolver JSON")
     ap.add_argument("--openai_api_key_env", type=str, default="OPENAI_API_KEY")
-    ap.add_argument("--auto_rotate_landscape", action="store_true")
-    ap.add_argument("--auto_rotate_landscape_ratio", type=float, default=1.05)
     ap.add_argument("--disable_dedup", action="store_true")
     ap.add_argument("--near_dup_hamming", type=int, default=6)
     ap.add_argument("--disable_conflict_resolver", action="store_true")

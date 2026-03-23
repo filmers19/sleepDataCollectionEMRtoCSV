@@ -1,9 +1,0 @@
-{
-  "image": "S20260319150737230718_JUYOUNG.KIM1102_email_0001.jpg",
-  "ocr_image": "S20260319150737230718_JUYOUNG.KIM1102_email_0001.jpg",
-  "auto_rotated_landscape": false,
-  "ok": false,
-  "elapsed_seconds": 0.4086540319840424,
-  "text_chars": 0,
-  "error": "RuntimeError: OpenAI OCR request failed: status=401 body={\n  \"error\": {\n    \"message\": \"Incorrect API key provided: sk-proj-********************************************************************************************************************************************************OV4A. You can find your API key at https://platform.openai.com/account/api-keys.\",\n    \"type\": \"invalid_request_error\",\n    \"code\": \"invalid_api_key\",\n    \"param\": null\n  },\n  \"status\": 401\n}"
-}

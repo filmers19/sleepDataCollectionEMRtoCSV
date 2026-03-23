@@ -1,0 +1,3 @@
+patient,ocr_txt,old_manual_official,old_manual_family,new_manual_official,new_manual_family,reason
+Patient_01,S20260210204833505232_JUYOUNG.KIM1102_email_0013.txt,0,NON,1,ESS,OCR text explicitly contains THE EPWORTH SLEEPINESS SCALE and full ESS items.
+Patient_05,S20260210204833505232_JUYOUNG.KIM1102_email_0066.txt,0,NON,1,ESS,OCR text explicitly contains THE EPWORTH SLEEPINESS SCALE and full ESS items.

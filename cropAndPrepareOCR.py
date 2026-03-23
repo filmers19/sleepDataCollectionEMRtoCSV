@@ -7,108 +7,6 @@ import cv2
 import numpy as np
 
 
-def order_points(pts: np.ndarray) -> np.ndarray:
-    pts = pts.astype("float32")
-    s = pts.sum(axis=1)
-    diff = np.diff(pts, axis=1)
-    top_left = pts[np.argmin(s)]
-    bottom_right = pts[np.argmax(s)]
-    top_right = pts[np.argmin(diff)]
-    bottom_left = pts[np.argmax(diff)]
-    return np.array([top_left, top_right, bottom_right, bottom_left], dtype="float32")
-
-
-def four_point_transform(image: np.ndarray, pts: np.ndarray) -> np.ndarray:
-    rect = order_points(pts)
-    (tl, tr, br, bl) = rect
-
-    width_a = np.linalg.norm(br - bl)
-    width_b = np.linalg.norm(tr - tl)
-    max_width = max(int(round(width_a)), int(round(width_b)))
-
-    height_a = np.linalg.norm(tr - br)
-    height_b = np.linalg.norm(tl - bl)
-    max_height = max(int(round(height_a)), int(round(height_b)))
-
-    dst = np.array(
-        [
-            [0, 0],
-            [max_width - 1, 0],
-            [max_width - 1, max_height - 1],
-            [0, max_height - 1],
-        ],
-        dtype="float32",
-    )
-    matrix = cv2.getPerspectiveTransform(rect, dst)
-    return cv2.warpPerspective(image, matrix, (max_width, max_height))
-
-
-def preprocess_for_document_mask(gray: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:
-    background = cv2.GaussianBlur(gray, (0, 0), sigmaX=45, sigmaY=45)
-    normalized = cv2.divide(gray, background, scale=255)
-    normalized = cv2.GaussianBlur(normalized, (5, 5), 0)
-
-    otsu_threshold, binary = cv2.threshold(
-        normalized, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
-    )
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
-    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
-    return normalized, binary, int(round(otsu_threshold))
-
-
-def detect_document(image: np.ndarray) -> tuple[np.ndarray, dict]:
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    normalized, binary, otsu_threshold = preprocess_for_document_mask(gray)
-
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return image.copy(), {
-            "method": "none",
-            "otsu_threshold": otsu_threshold,
-            "polygon_found": False,
-            "used_fallback_bbox": False,
-        }
-
-    image_area = image.shape[0] * image.shape[1]
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)
-
-    document_contour = None
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area >= image_area * 0.12:
-            document_contour = contour
-            break
-    if document_contour is None:
-        document_contour = contours[0]
-
-    peri = cv2.arcLength(document_contour, True)
-    approx = cv2.approxPolyDP(document_contour, 0.02 * peri, True)
-
-    if len(approx) == 4:
-        warped = four_point_transform(image, approx.reshape(4, 2))
-        return warped, {
-            "method": "perspective_transform",
-            "otsu_threshold": otsu_threshold,
-            "polygon_found": True,
-            "used_fallback_bbox": False,
-            "contour_area": float(cv2.contourArea(document_contour)),
-            "points": approx.reshape(4, 2).tolist(),
-        }
-
-    x, y, w, h = cv2.boundingRect(document_contour)
-    cropped = image[y : y + h, x : x + w].copy()
-    return cropped, {
-        "method": "bounding_box_fallback",
-        "otsu_threshold": otsu_threshold,
-        "polygon_found": False,
-        "used_fallback_bbox": True,
-        "contour_area": float(cv2.contourArea(document_contour)),
-        "bbox": [int(x), int(y), int(w), int(h)],
-    }
-
-
 def trim_white_margins(
     image: np.ndarray,
     white_threshold: int = 245,
@@ -219,12 +117,6 @@ def main() -> None:
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--debug-mask", default=None)
-
-    parser.add_argument(
-        "--mode",
-        choices=["document", "trim_whitespace"],
-        default="document",
-    )
     parser.add_argument("--white-threshold", type=int, default=245)
     parser.add_argument("--min-content-pixels-ratio", type=float, default=0.001)
     parser.add_argument("--margin", type=int, default=8)
@@ -240,7 +132,6 @@ def main() -> None:
     parser.add_argument("--no-denoise", action="store_true")
     parser.add_argument("--sharpen", action="store_true")
     parser.add_argument("--no-clahe", action="store_true")
-    parser.add_argument("--trim-after-document", action="store_true")
 
     args = parser.parse_args()
 
@@ -252,24 +143,12 @@ def main() -> None:
     if image is None:
         raise RuntimeError(f"Failed to load image: {input_path}")
 
-    if args.mode == "trim_whitespace":
-        processed, meta = trim_white_margins(
-            image,
-            white_threshold=args.white_threshold,
-            min_content_pixels_ratio=args.min_content_pixels_ratio,
-            margin=args.margin,
-        )
-    else:
-        processed, meta = detect_document(image)
-
-    if args.trim_after_document and args.mode == "document":
-        processed, trim_meta = trim_white_margins(
-            processed,
-            white_threshold=args.white_threshold,
-            min_content_pixels_ratio=args.min_content_pixels_ratio,
-            margin=args.margin,
-        )
-        meta["post_trim"] = trim_meta
+    processed, meta = trim_white_margins(
+        image,
+        white_threshold=args.white_threshold,
+        min_content_pixels_ratio=args.min_content_pixels_ratio,
+        margin=args.margin,
+    )
 
     if args.ocr_ready:
         processed, ocr_meta = prepare_for_ocr(
@@ -289,10 +168,7 @@ def main() -> None:
     if args.debug_mask:
         debug_path = Path(args.debug_mask)
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        if args.mode == "trim_whitespace":
-            binary = np.where(gray < args.white_threshold, 255, 0).astype(np.uint8)
-        else:
-            _, binary, _ = preprocess_for_document_mask(gray)
+        binary = np.where(gray < args.white_threshold, 255, 0).astype(np.uint8)
         cv2.imwrite(str(debug_path), binary)
 
     print(
