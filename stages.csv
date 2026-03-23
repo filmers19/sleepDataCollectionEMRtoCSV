@@ -1,0 +1,5 @@
+단계,cdm type,N,1차 성능,Conflict 포함 성능,Remark
+1,"Basic, Demographics, CoreQ, PSG-RDI/SpO2",50,86% (95/110),95% (105/110),P2 연구 가능단계
+2,"Basic, Demographics, CoreQ, PSG-RDI/SpO2, SubQ",50,95% (227/239),97% (232/239),P2 확장 연구 가능단계
+3,"Basic, Demographics, CoreQ, PSG-RDI/SpO2, SubQ, PSG",50,95% (276/290),96% (278/290),CDM 배포 가능단계 1
+4,"Basic, Demographics, CoreQ, PSG-RDI/SpO2, SubQ, PSG, CPAP",50,95% (442/465),96% (446/465),CDM 배포 가능단계 2

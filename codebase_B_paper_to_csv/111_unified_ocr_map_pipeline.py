@@ -32,6 +32,9 @@ logger = logging.getLogger("unified_ocr_map")
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 RATE_LIMITER_REGISTRY = RateLimiterRegistry()
+PHX_CHECKLIST_TRIGGER = "다음과 같은 질환을 앓고 있거나 과거에 앓은 적이 있습니까?"
+PHX_EXPECTED_YES_NO_TOTAL = 28
+PHX_OCR_MAX_ATTEMPTS = 3
 
 
 def resolve_script_path(path_str: str) -> Path:
@@ -102,6 +105,20 @@ class TextAgent(Protocol):
 def parse_model_id_list(raw: str) -> List[str]:
     parts = [p.strip() for p in str(raw or "").split(",")]
     return [p for p in parts if p]
+
+
+def analyze_phx_yes_no_markers(text: str) -> Dict[str, Any]:
+    yes_count = text.count("[Yes]")
+    no_count = text.count("[No]")
+    total = yes_count + no_count
+    contains_trigger = PHX_CHECKLIST_TRIGGER in text
+    return {
+        "contains_trigger": contains_trigger,
+        "yes_count": yes_count,
+        "no_count": no_count,
+        "total": total,
+        "is_complete": (not contains_trigger) or total == PHX_EXPECTED_YES_NO_TOTAL,
+    }
 
 
 class RemoteOpenAIResponsesTextAgent:
@@ -1965,6 +1982,7 @@ async def run(args: argparse.Namespace) -> None:
     started = time.perf_counter()
     ocr_pairs: List[Tuple[Path, str]] = []
     page_errors: List[Dict[str, str]] = []
+    phx_ocr_issues: List[Dict[str, Any]] = []
     ocr_sem = asyncio.Semaphore(max(1, int(args.ocr_concurrency)))
     map_sem = asyncio.Semaphore(max(1, int(args.map_concurrency)))
 
@@ -2002,11 +2020,56 @@ async def run(args: argparse.Namespace) -> None:
                         auto_rotate_landscape=args.auto_rotate_landscape,
                         aspect_ratio_threshold=args.auto_rotate_landscape_ratio,
                     )
-                    text = await ocr_backend.aocr(
-                        image_path=ocr_image_path,
-                        system_prompt=pipeline_mod.OCR_SYSTEM,
-                        user_text=pipeline_mod.OCR_USER_PROMPT,
-                    )
+                    best_attempt: Optional[Dict[str, Any]] = None
+                    last_exc: Optional[Exception] = None
+                    attempt_count = 0
+                    for attempt_idx in range(1, PHX_OCR_MAX_ATTEMPTS + 1):
+                        attempt_count = attempt_idx
+                        try:
+                            attempt_text = await ocr_backend.aocr(
+                                image_path=ocr_image_path,
+                                system_prompt=pipeline_mod.OCR_SYSTEM,
+                                user_text=pipeline_mod.OCR_USER_PROMPT,
+                            )
+                        except Exception as exc:
+                            last_exc = exc
+                            logger.warning(
+                                "OCR attempt %d/%d failed for %s: %s: %s",
+                                attempt_idx,
+                                PHX_OCR_MAX_ATTEMPTS,
+                                img.name,
+                                type(exc).__name__,
+                                exc,
+                            )
+                            continue
+
+                        marker_info = analyze_phx_yes_no_markers(attempt_text)
+                        attempt_result = {
+                            "text": attempt_text,
+                            "marker_info": marker_info,
+                            "attempt": attempt_idx,
+                        }
+                        if (
+                            best_attempt is None
+                            or marker_info["total"] > best_attempt["marker_info"]["total"]
+                        ):
+                            best_attempt = attempt_result
+                        if marker_info["is_complete"]:
+                            break
+                        logger.warning(
+                            "OCR retry %d/%d for %s due to PHx marker count %d/%d",
+                            attempt_idx,
+                            PHX_OCR_MAX_ATTEMPTS,
+                            img.name,
+                            marker_info["total"],
+                            PHX_EXPECTED_YES_NO_TOTAL,
+                        )
+
+                    if best_attempt is None:
+                        assert last_exc is not None
+                        raise last_exc
+                    text = str(best_attempt["text"])
+                    marker_info = dict(best_attempt["marker_info"])
                     meta = {
                         "image": img.name,
                         "ocr_image": ocr_image_path.name,
@@ -2017,6 +2080,12 @@ async def run(args: argparse.Namespace) -> None:
                         "error": "",
                         "reused_ocr": False,
                         "reused_from": "",
+                        "ocr_attempts": attempt_count,
+                        "phx_contains_trigger": marker_info["contains_trigger"],
+                        "phx_yes_count": marker_info["yes_count"],
+                        "phx_no_count": marker_info["no_count"],
+                        "phx_yes_no_total": marker_info["total"],
+                        "phx_expected_yes_no_total": PHX_EXPECTED_YES_NO_TOTAL,
                     }
                 ocr_pairs.append((img, text))
                 (ocr_page_dir / f"{img.stem}.txt").write_text(text, encoding="utf-8")
@@ -2035,6 +2104,25 @@ async def run(args: argparse.Namespace) -> None:
                 json.dumps(meta, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+            if (
+                meta.get("ok")
+                and meta.get("phx_contains_trigger")
+                and int(meta.get("phx_yes_no_total") or 0) != PHX_EXPECTED_YES_NO_TOTAL
+                and int(meta.get("ocr_attempts") or 0) >= PHX_OCR_MAX_ATTEMPTS
+            ):
+                phx_ocr_issues.append(
+                    {
+                        "image": img.name,
+                        "status": "failed_after_max_retries",
+                        "ocr_attempts": int(meta.get("ocr_attempts") or 0),
+                        "phx_yes_count": int(meta.get("phx_yes_count") or 0),
+                        "phx_no_count": int(meta.get("phx_no_count") or 0),
+                        "phx_yes_no_total": int(meta.get("phx_yes_no_total") or 0),
+                        "phx_expected_yes_no_total": PHX_EXPECTED_YES_NO_TOTAL,
+                        "ocr_text_file": f"ocr_pages/{img.stem}.txt",
+                        "ocr_meta_file": f"ocr_pages/{img.stem}.meta.json",
+                    }
+                )
             logger.info(
                 "OCR %d/%d | %s | ok=%s | elapsed=%.1fs | chars=%d",
                 idx,
@@ -2236,6 +2324,7 @@ async def run(args: argparse.Namespace) -> None:
         out_dir=output_dir,
         elapsed_s=(time.perf_counter() - started),
     )
+    patient_res["phx_ocr_issues"] = phx_ocr_issues
 
     if conflict_backend is not None and patient_res.get("row") is not None and patient_res.get("conflicts"):
         overrides, decisions = await resolve_conflicts(

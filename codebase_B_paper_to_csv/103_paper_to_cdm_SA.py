@@ -2565,21 +2565,65 @@ def build_map_agent_specs(
     )
     return specs
 # - Convert table into human interpretable texts.
+# OCR_SYSTEM = """
+# # Role: You are a literal OCR engine for sleep-clinic questionnaires with Korean/English printed text, handwritings, tables, and marked answers by circles, checks, crosses, and other symbols.
+# # Task: Perform OCR on all visible content on the scanned page as accurately as possible.
+# # For medical history checklist with '그 외 다음과 같은 질환을 앓고 있거나 과거에 앓은 적이 있습니까', you MUST use '[No]' for unmarked conditions and '[Yes]' for marked conditions.
+# e.g.,
+# ([No] 뇌졸중, [No] 파킨슨씨 병, [No] 말초 신경질환, [No] 경련성 질환, [No] 치매/노망, [No] 일크올 중독증, [No] 암
+# [No] 약물 부작용, [No] 약물 상습 복용, [No] 심부전(신장질환), [No] 만성 폐질환, [No] 고혈압, [No] 갑상선질환, [No] 간염
+# [No] 당뇨, [No] 심장질환, [No] 코뼈가 부러진 적, [No] 축농증, [Yes] 치과 질환, [No] 알러지성 비염, [No] 천식, [No] 위궤양,
+# [Yes] 위식도 역류, [No] 정신과적 질환, [No] 우울증, [Yes] 불안증, [Yes] 공황장애, [Yes] 자살시도)
+
+# # Output format
+# - Only the pure, transcribed text that covers the full page.
+# """
+# - First, detect orientation of the page. If the page is not upright, rotate it to upright orientation before performing OCR and extraction.
+# - Prepend the exact line 'This page is rotated by XX degrees. Rotating to upright orientation before OCR.' if you detect and correct rotation.
+
 OCR_SYSTEM = """
 # Role: You are a literal OCR engine for sleep-clinic questionnaires with Korean/English printed text, handwritings, tables, and marked answers by circles, checks, crosses, and other symbols.
 # Task: Perform OCR on all visible content on the scanned page as accurately as possible.
+
 # Guideline
 - Preserve original wording, script, numbers, punctuation, units, and visible structure as faithfully as plain text allows.
 - Construct a table as much as possible by texts. (Should be interpretable by later LLM agent)
 - Multiple choices can be given as numbers encircled, plain numbers, plain texts, square boxes, and empty slots for users to mark answers with circles, checks, crosses, or other symbols.
-- Mark a visibly chosen option inline as '[selected]'. Selected option should be clearly expressed without ambiguity. keep question-answer association explicit.
-- Use '[corrected from X to Y]' when a correction or overwrite is visible.
-- Use '[crossed out]' when text is visibly struck through or crossed out.
-- Use '[unclear]' when the content/selection is unclear.
-- Use '[not filled/answered]' when a visible blank answer field is clearly intended and relevant.
-- Special case: For medical history checklist with '그 외 다음과 같은 질환을 앓고 있거나 과거에 앓은 적이 있습니까', use '[No]' for unmarked conditions and '[Yes]' for marked conditions.
-    e.g., 뇌졸중 [No], 파킨슨씨 병 [No], ..., 공황장애 [Yes], 자살시도 [No]
-- Special case: if the page primarily contains polysomnography channel signal graphs/tracings, prepend the exact line 'This page contains psg signal graphs.' before the rest of the transcription. This note is allowed even though it is not literal page text.
+- For human handwritings, you should transcribe the text as accurately as possible, but also can infer the text to maintain the semantic consistency.
+- Write '[selected: answer]' for visibly chosen options inline. Selected option should be clearly expressed without ambiguity. keep question-answer association explicit.
+    e.g., [selected: 1], [selected: Yes], [selected: option text]
+    e.g., The Epworth Sleepiness Scale
+        아래의 상황들에서 당신은 어느 정도나 졸음을 느끼십니까?
+        다음에서 적절한 답을 골라서 각 문항의 ( )안에 그 번호를 써 주십시오.
+        0 = 전혀 졸지 않는다 1 = 가끔 졸음에 빠진다
+        2 = 종종 졸음에 빠진다 3 = 자주 졸음에 빠진다
+        ([selected: 2]) 앉아서 책을 읽을 때
+        ([selected: 1]) 텔레비전을 볼 때
+        ([selected: 3]) 극장이나 회의석상과 같은 공공장소에서 가만히 앉아 있을 때
+        ([selected: 1]) 1시간 정도 계속 버스나 택시를 타고 있을 때
+        ([selected: 1]) 오후 휴식시간에 편안히 누워 있을 때
+        ([selected: 0]) 앉아서 누군가에게 말을 하고 있을 때
+        ([selected: 1]) 점심식사 후 조용히 앉아 있을 때
+        ([selected: 0]) 차를 운전하고 가다가 교통체증으로 몇 분간 멈추어 서 있을 때
+- Write '[not selected: option]' for visibly unchosen options inline when the question-answer association is explicit.
+    e.g., [not selected: 0], [not selected: No], [not selected: option text]]
+    e.g., [not selected] if psqi table row is visibly unmarked.
+- Write '[not answered]' when a question is clearly not answered or left blank without any visible markings.
+    e.g., [not answered] if psqi question is not answered.
+- Write '[crossed out]' when text is visibly struck through or crossed out.
+- Write '[corrected from X to Y]' when a correction or overwrite is visible.
+- Write '[Yes]'/'[No]' for medical history checklist with '그 외 다음과 같은 질환을 앓고 있거나 과거에 앓은 적이 있습니까'. ('[No]' for unmarked/unchecked conditions and '[Yes]' for marked/checked conditions)
+    e.g.,
+    ([No] 뇌졸중, [No] 파킨슨씨 병, [No] 말초 신경질환, [No] 경련성 질환, [No] 치매/노망, [No] 일크올 중독증, [No] 암
+    [No] 약물 부작용, [No] 약물 상습 복용, [No] 심부전(신장질환), [No] 만성 폐질환, [No] 고혈압, [No] 갑상선질환, [No] 간염
+    [No] 당뇨, [No] 심장질환, [No] 코뼈가 부러진 적, [No] 축농증, [Yes] 치과 질환, [No] 알러지성 비염, [No] 천식, [No] 위궤양,
+    [Yes] 위식도 역류, [No] 정신과적 질환, [No] 우울증, [Yes] 불안증, [Yes] 공황장애, [Yes] 자살시도)
+- Prepend the exact line 'This page contains psg signal graphs.' before the rest of the transcription when the page primarily contains polysomnography channel signal graphs/tracings.
+
+# Caution
+- Do NOT generate any text that is not directly supported by visible content on the page.
+- Do NOT infer or guess any illegible information.
+- Only numbers can come in front of hours and minute sections. Exception is '~', which oftern indicates a range.
 
 # Output format
 - Only the pure, transcribed text that covers the full page.
@@ -2627,7 +2671,7 @@ You will get two inputs:
         - Occupation categorization
             - Normalize occupation to Korean wording when possible.
             - if CDM options exist for the occupation, map to the correct option code.
-            - if OCR answer indicates job-seeking/leave (e.g., 취준, 취업준비, 휴직), omit Occupation.
+            - if OCR answer indicates job-seeking/leave or jobless (e.g., 취준, 취업준비, 휴직, 무직, X), omit Occupation.
         - PHx, Medical History Sections
             - PHx_* keys must come only from the explicit medical-history checklist/list on the page.
             - Do not infer PHx_* from diagnosis summary, medication list, free-text complaint, or family history.
@@ -2653,7 +2697,7 @@ You will get two inputs:
     - Be careful not to connect wrong cdm key to irrelevant text.
 - CDM Keys -> CDM Values
     - Review your key-value decision carefully to reduce mistakes.
-- Before finalizing, check whether any obvious directly supported candidate fields from the page header, questionnaire item list, or PSG tables were omitted.
+- Before finalizing, check whether any obvious directly supported candidate fields from the questionnaire title, questionnaire item list, or PSG tables were omitted.
 
 # Output format
 Output JSON object only. Return ONE JSON object that maps CDM keys to objects with this schema:
@@ -4154,6 +4198,7 @@ def build_conflict_markdown_report(
     row: Optional[Dict[str, Any]],
     conflicts: Dict[str, List[Dict[str, Any]]],
     conflict_resolution: Dict[str, Any],
+    phx_ocr_issues: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     mode_counts = Counter(
@@ -4169,15 +4214,51 @@ def build_conflict_markdown_report(
         f"- Resolved by code: `{mode_counts.get('code_majority', 0)}`",
         f"- Resolved by LLM batch: `{mode_counts.get('llm_batch', 0)}`",
         f"- Resolved by LLM single: `{mode_counts.get('llm_single', 0)}`",
+        f"- PHx OCR issues: `{len(phx_ocr_issues or [])}`",
         "",
     ]
+
+    if phx_ocr_issues:
+        lines.extend(
+            [
+                "## PHx OCR Issues",
+                "",
+                "These PHx pages reached the maximum OCR retry count and still did not satisfy the expected `[Yes]` / `[No]` marker count.",
+                "",
+            ]
+        )
+        for idx, issue in enumerate(phx_ocr_issues, start=1):
+            image = str(issue.get("image") or "").strip()
+            attempts = int(issue.get("ocr_attempts") or 0)
+            yes_count = int(issue.get("phx_yes_count") or 0)
+            no_count = int(issue.get("phx_no_count") or 0)
+            total = int(issue.get("phx_yes_no_total") or 0)
+            expected = int(issue.get("phx_expected_yes_no_total") or 0)
+            ocr_text_file = str(issue.get("ocr_text_file") or "").strip()
+            ocr_meta_file = str(issue.get("ocr_meta_file") or "").strip()
+            lines.extend(
+                [
+                    f"### {idx}. `{image}`",
+                    "",
+                    "- Status: `failed_after_max_retries`",
+                    f"- OCR attempts: `{attempts}`",
+                    f"- Marker count: `{total}/{expected}`",
+                    f"- `[Yes]` count: `{yes_count}`",
+                    f"- `[No]` count: `{no_count}`",
+                ]
+            )
+            if ocr_text_file:
+                lines.append(f"- OCR text file: `{ocr_text_file}`")
+            if ocr_meta_file:
+                lines.append(f"- OCR meta file: `{ocr_meta_file}`")
+            lines.append("")
 
     if not conflicts:
         lines.extend(
             [
                 "## Summary",
                 "",
-                "No conflicts were detected for this patient.",
+                "No CDM conflicts were detected for this patient.",
                 "",
             ]
         )
@@ -4339,13 +4420,21 @@ def write_patient_outputs(output_dir: Path, patient_name: str, res: Dict[str, An
             encoding="utf-8",
         )
 
-    if res.get("conflicts") or res.get("conflict_resolution"):
+    if res.get("phx_ocr_issues"):
+        (output_dir / "ocr_issues").mkdir(exist_ok=True)
+        (output_dir / "ocr_issues" / f"{patient_name}_phx_ocr_issues.json").write_text(
+            json.dumps(res["phx_ocr_issues"], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    if res.get("conflicts") or res.get("conflict_resolution") or res.get("phx_ocr_issues"):
         (output_dir / "conflict_reports").mkdir(exist_ok=True)
         report_md = build_conflict_markdown_report(
             patient_name=patient_name,
             row=res.get("row"),
             conflicts=res.get("conflicts") or {},
             conflict_resolution=res.get("conflict_resolution") or {},
+            phx_ocr_issues=res.get("phx_ocr_issues") or [],
         )
         (output_dir / "conflict_reports" / f"{patient_name}_conflict_report.md").write_text(
             report_md,

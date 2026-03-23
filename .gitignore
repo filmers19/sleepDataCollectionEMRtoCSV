@@ -12,6 +12,8 @@ logs/
 outputs/
 out_*/
 frozen_ocr_*/
+datasetv*/
+tmp_patient*_*/
 
 paper_patients/
 data/
