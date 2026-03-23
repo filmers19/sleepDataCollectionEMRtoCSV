@@ -121,6 +121,14 @@ def analyze_phx_yes_no_markers(text: str) -> Dict[str, Any]:
     }
 
 
+def format_phx_retry_prompt(user_text: str, attempt_idx: int) -> str:
+    label = f"medical history [yes]/[no] mark omission retrial {int(attempt_idx)}"
+    body = str(user_text or "").strip()
+    if not body:
+        return label
+    return f"{label}\n\n{body}"
+
+
 class RemoteOpenAIResponsesTextAgent:
     def __init__(
         self,
@@ -2024,11 +2032,17 @@ async def run(args: argparse.Namespace) -> None:
                     attempt_count = 0
                     for attempt_idx in range(1, PHX_OCR_MAX_ATTEMPTS + 1):
                         attempt_count = attempt_idx
+                        attempt_user_prompt = pipeline_mod.OCR_USER_PROMPT
+                        if attempt_idx > 1:
+                            attempt_user_prompt = format_phx_retry_prompt(
+                                pipeline_mod.OCR_USER_PROMPT,
+                                attempt_idx - 1,
+                            )
                         try:
                             attempt_text = await ocr_backend.aocr(
                                 image_path=ocr_image_path,
                                 system_prompt=pipeline_mod.OCR_SYSTEM,
-                                user_text=pipeline_mod.OCR_USER_PROMPT,
+                                user_text=attempt_user_prompt,
                             )
                         except Exception as exc:
                             last_exc = exc

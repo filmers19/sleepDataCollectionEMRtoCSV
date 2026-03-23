@@ -309,7 +309,7 @@ MORNING_QUESTIONNAIRE_HINT_PATTERNS: List[Tuple[re.Pattern, int, str]] = [
 NIGHT_QUESTIONNAIRE_HINT_PATTERNS: List[Tuple[re.Pattern, int, str]] = [
     (re.compile(r"questionnaire|설문지|문진표|자가기입|자가\s*보고|지난\s*한\s*달간", re.I), 2, "questionnaire_title"),
     (re.compile(r"\b(?:psqi|epworth|ess|fss|bq|berlin questionnaire|isi|rbdsq|phq|whoqol)\b", re.I), 2, "questionnaire_scale_name"),
-    (re.compile(r"\[\s*selected\s*\]|◯|○|☑|✓|체크|예\s*/\s*아니오|예\s+\[selected\]|아니오\s+\[selected\]", re.I), 2, "questionnaire_marks"),
+    (re.compile(r"\[\s*selected!\s*\]|◯|○|☑|✓|체크|예\s*/\s*아니오|예\s+\[selected!\]|아니오\s+\[selected\]", re.I), 2, "questionnaire_marks"),
     (re.compile(r"(?:^|\n)\s*\d{1,2}\.\s", re.I), 1, "questionnaire_numbered_items"),
     (re.compile(r"환자|본인|주중|주말|잠이|졸립|피곤|깼|수면", re.I), 1, "questionnaire_language"),
 ]
@@ -2590,27 +2590,27 @@ OCR_SYSTEM = """
 - Construct a table as much as possible by texts. (Should be interpretable by later LLM agent)
 - Multiple choices can be given as numbers encircled, plain numbers, plain texts, square boxes, and empty slots for users to mark answers with circles, checks, crosses, or other symbols.
 - For human handwritings, you should transcribe the text as accurately as possible, but also can infer the text to maintain the semantic consistency.
-- Write '[selected: answer]' for visibly chosen options inline. Selected option should be clearly expressed without ambiguity. keep question-answer association explicit.
-    e.g., [selected: 1], [selected: Yes], [selected: option text]
+- Write '[selected!: answer]' for visibly chosen options inline. Selected option should be clearly expressed without ambiguity. keep question-answer association explicit.
+    e.g., [selected!: 1], [selected!: Yes], [selected!: option text]
     e.g., The Epworth Sleepiness Scale
         아래의 상황들에서 당신은 어느 정도나 졸음을 느끼십니까?
         다음에서 적절한 답을 골라서 각 문항의 ( )안에 그 번호를 써 주십시오.
         0 = 전혀 졸지 않는다 1 = 가끔 졸음에 빠진다
         2 = 종종 졸음에 빠진다 3 = 자주 졸음에 빠진다
-        ([selected: 2]) 앉아서 책을 읽을 때
-        ([selected: 1]) 텔레비전을 볼 때
-        ([selected: 3]) 극장이나 회의석상과 같은 공공장소에서 가만히 앉아 있을 때
-        ([selected: 1]) 1시간 정도 계속 버스나 택시를 타고 있을 때
-        ([selected: 1]) 오후 휴식시간에 편안히 누워 있을 때
-        ([selected: 0]) 앉아서 누군가에게 말을 하고 있을 때
-        ([selected: 1]) 점심식사 후 조용히 앉아 있을 때
-        ([selected: 0]) 차를 운전하고 가다가 교통체증으로 몇 분간 멈추어 서 있을 때
+        ([selected!: 2]) 앉아서 책을 읽을 때
+        ([selected!: 1]) 텔레비전을 볼 때
+        ([selected!: 3]) 극장이나 회의석상과 같은 공공장소에서 가만히 앉아 있을 때
+        ([selected!: 1]) 1시간 정도 계속 버스나 택시를 타고 있을 때
+        ([selected!: 1]) 오후 휴식시간에 편안히 누워 있을 때
+        ([selected!: 0]) 앉아서 누군가에게 말을 하고 있을 때
+        ([selected!: 1]) 점심식사 후 조용히 앉아 있을 때
+        ([selected!: 0]) 차를 운전하고 가다가 교통체증으로 몇 분간 멈추어 서 있을 때
 - Write '[not selected: option]' for visibly unchosen options inline when the question-answer association is explicit.
     e.g., [not selected: 0], [not selected: No], [not selected: option text]]
     e.g., [not selected] if psqi table row is visibly unmarked.
 - Write '[not answered]' when a question is clearly not answered or left blank without any visible markings.
     e.g., [not answered] if psqi question is not answered.
-- Write '[crossed out]' when text is visibly struck through or crossed out.
+- Write '[crossed out/struck through]' when text is visibly struck through or crossed out.
 - Write '[corrected from X to Y]' when a correction or overwrite is visible.
 - Write '[Yes]'/'[No]' for medical history checklist with '그 외 다음과 같은 질환을 앓고 있거나 과거에 앓은 적이 있습니까'. ('[No]' for unmarked/unchecked conditions and '[Yes]' for marked/checked conditions)
     e.g.,
@@ -2661,6 +2661,7 @@ You will get two inputs:
             - Always attempt to emit Hospital_ID, Name, PSG_Date, PSG_No, PSG_Type, SEX, AGE, Height_cm, Weight_kg, BMI, Neckcir_cm when directly supported by the OCR text. Missing these fields is a serious error.
         - Name
             - If the patient name is written in Korean, output the Korean name in Korean.
+                e.g., Lee chang-bong -> 이창봉
             - If the patient name is written in English, output the English name in English.
             - Do not romanize Korean names, and do not translate English names into Korean.
         - Numeric ranges (i.e. 'a~b')
@@ -2697,6 +2698,8 @@ You will get two inputs:
     - Be careful not to connect wrong cdm key to irrelevant text.
 - CDM Keys -> CDM Values
     - Review your key-value decision carefully to reduce mistakes.
+- Do NOT map CDM values if tagged as [not selected], [not answered], or [crossed out/struck through].
+- Do NOT map CDM values if answer is clearly not given or selected, even without such explicit tags.
 - Before finalizing, check whether any obvious directly supported candidate fields from the questionnaire title, questionnaire item list, or PSG tables were omitted.
 
 # Output format
