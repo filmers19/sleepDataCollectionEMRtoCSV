@@ -860,6 +860,25 @@ def build_route_schema_hint() -> str:
     return '{"route":"<route>","confidence":"high|medium|low","reason":"<short reason>"}'
 
 
+def build_category_split_schema_hint() -> str:
+    return (
+        '{"phx_habit":[{"start_line":1,"end_line":2}],'
+        '"sleep_behavior":[{"start_line":3,"end_line":4}],'
+        '"psg":[{"start_line":5,"end_line":6}],'
+        '"psqi":[],'
+        '"sss":[],'
+        '"ess":[],'
+        '"fss":[],'
+        '"berlin":[],'
+        '"isi":[],'
+        '"rls":[],'
+        '"rbd":[],'
+        '"phq":[],'
+        '"bdi":[],'
+        '"qol":[]}'
+    )
+
+
 async def route_ocr_text(
     llm: TextAgent,
     pipeline_mod: Any,
@@ -885,6 +904,123 @@ async def route_ocr_text(
         fallback["reason"] = f"heuristic_fallback_after_route_error:{type(exc).__name__}"
         logger.warning("Route classifier failed, falling back to heuristic router: %s", exc)
         return fallback
+
+
+async def split_patient_ocr_categories(
+    llm: TextAgent,
+    pipeline_mod: Any,
+    image_name_text_pairs: Sequence[Tuple[str, str]],
+    max_attempts: int,
+) -> List[Dict[str, Any]]:
+    merged_ocr_text = pipeline_mod.merge_ocr_text_blocks(list(image_name_text_pairs))
+    try:
+        raw = await text_to_json(
+            llm=llm,
+            system_prompt=pipeline_mod.CATEGORY_SPLIT_SYSTEM,
+            user_text=pipeline_mod.build_category_split_user_prompt(
+                merged_ocr_text=merged_ocr_text,
+                source_images=[name for name, _ in image_name_text_pairs],
+            ),
+            pipeline_mod=pipeline_mod,
+            schema_hint=build_category_split_schema_hint(),
+            max_attempts=max_attempts,
+            label="category_split",
+        )
+        records = pipeline_mod.normalize_category_split_decision(raw, image_name_text_pairs)
+        assigned_ranges = pipeline_mod._extract_assigned_ranges_from_records(records)
+        leftover_ranges = pipeline_mod.extract_uncategorized_informative_ranges(
+            merged_ocr_text=merged_ocr_text,
+            assigned_ranges=assigned_ranges,
+        )
+        if leftover_ranges:
+            try:
+                rescue_raw = await text_to_json(
+                    llm=llm,
+                    system_prompt=pipeline_mod.CATEGORY_SPLIT_SYSTEM,
+                    user_text=pipeline_mod.build_leftover_rescue_user_prompt(
+                        merged_ocr_text=merged_ocr_text,
+                        leftover_ranges=leftover_ranges,
+                    ),
+                    pipeline_mod=pipeline_mod,
+                    schema_hint=build_category_split_schema_hint(),
+                    max_attempts=max_attempts,
+                    label="category_split_rescue",
+                )
+                records = pipeline_mod.merge_rescued_category_ranges(
+                    merged_ocr_text=merged_ocr_text,
+                    records=records,
+                    rescue_payload=rescue_raw,
+                )
+            except Exception as exc:
+                logger.warning("Category split leftover rescue agent failed, falling back to deterministic assignment: %s", exc)
+
+        final_assigned_ranges = pipeline_mod._extract_assigned_ranges_from_records(records)
+        final_leftover_ranges = pipeline_mod.extract_uncategorized_informative_ranges(
+            merged_ocr_text=merged_ocr_text,
+            assigned_ranges=final_assigned_ranges,
+        )
+        if final_leftover_ranges:
+            fallback_payload = pipeline_mod.assign_leftover_ranges_to_best_categories(
+                merged_ocr_text=merged_ocr_text,
+                leftover_ranges=final_leftover_ranges,
+            )
+            records = pipeline_mod.merge_rescued_category_ranges(
+                merged_ocr_text=merged_ocr_text,
+                records=records,
+                rescue_payload=fallback_payload,
+            )
+        return records
+    except Exception as exc:
+        logger.warning("Category split agent failed, falling back to heuristic page categorization: %s", exc)
+        return pipeline_mod.normalize_category_split_decision({}, image_name_text_pairs)
+
+
+async def map_category_to_json(
+    llm: TextAgent,
+    pipeline_mod: Any,
+    ocr_text: str,
+    candidates_block: str,
+    map_category: str,
+    max_attempts: int,
+) -> Dict[str, Any]:
+    return await text_to_json(
+        llm=llm,
+        system_prompt=pipeline_mod.MAP_SYSTEM,
+        user_text=pipeline_mod.build_category_map_user_prompt(
+            ocr_text=ocr_text,
+            candidates_block=candidates_block,
+            map_category=map_category,
+        ),
+        pipeline_mod=pipeline_mod,
+        schema_hint=build_map_schema_hint(),
+        max_attempts=max_attempts,
+        label=f"map_{map_category}",
+    )
+
+
+async def map_category_recall_to_json(
+    llm: TextAgent,
+    pipeline_mod: Any,
+    ocr_text: str,
+    candidates_block: str,
+    existing_json: Dict[str, Any],
+    map_category: str,
+    max_attempts: int,
+) -> Dict[str, Any]:
+    return await text_to_json(
+        llm=llm,
+        system_prompt=pipeline_mod.MAP_RECALL_SYSTEM,
+        user_text=pipeline_mod.build_category_map_recall_user_prompt(
+            ocr_text=ocr_text,
+            candidates_block=candidates_block,
+            existing_json=existing_json,
+            map_category=map_category,
+        ),
+        pipeline_mod=pipeline_mod,
+        schema_hint=build_map_schema_hint(),
+        max_attempts=max_attempts,
+        label=f"map_recall_{map_category}",
+    )
 
 
 async def map_to_json(
@@ -969,6 +1105,79 @@ def apply_core_backfill_to_stage(
         )
     for key, meta in backfill_rejected.items():
         stage_rejected.setdefault(key, meta)
+
+
+async def map_ocr_text_for_category(
+    llm: TextAgent,
+    pipeline_mod: Any,
+    retriever: Any,
+    ocr_text: str,
+    map_category: str,
+    json_retry_attempts: int,
+    enable_recall: bool,
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, str]], Dict[str, str], Dict[str, Dict[str, Any]]]:
+    stage_raw: Dict[str, Any] = {}
+    stage_valid: Dict[str, Any] = {}
+    stage_contexts: Dict[str, Dict[str, str]] = {}
+    stage_cdm_contexts: Dict[str, str] = {}
+    stage_rejected: Dict[str, Dict[str, Any]] = {}
+    normalized_category = pipeline_mod.normalize_map_category_name(map_category)
+    prompt_ocr_text = pipeline_mod.normalize_category_map_input_text(normalized_category, ocr_text)
+    candidates_block = retriever.prompt_block_for_category(normalized_category, include_basic=True)
+
+    raw = await map_category_to_json(
+        llm=llm,
+        pipeline_mod=pipeline_mod,
+        ocr_text=prompt_ocr_text,
+        candidates_block=candidates_block,
+        map_category=normalized_category,
+        max_attempts=json_retry_attempts,
+    )
+    pipeline_mod.merge_map_payload_into_stage(
+        retriever=retriever,
+        ocr_text=ocr_text,
+        raw_payload=raw,
+        route_name=normalized_category,
+        stage_raw=stage_raw,
+        stage_valid=stage_valid,
+        stage_contexts=stage_contexts,
+        stage_cdm_contexts=stage_cdm_contexts,
+        stage_rejected=stage_rejected,
+    )
+
+    if enable_recall and pipeline_mod.should_run_recall_pass(prompt_ocr_text, stage_valid):
+        recall_raw = await map_category_recall_to_json(
+            llm=llm,
+            pipeline_mod=pipeline_mod,
+            ocr_text=prompt_ocr_text,
+            candidates_block=candidates_block,
+            existing_json=stage_valid,
+            map_category=normalized_category,
+            max_attempts=json_retry_attempts,
+        )
+        pipeline_mod.merge_map_payload_into_stage(
+            retriever=retriever,
+            ocr_text=ocr_text,
+            raw_payload=recall_raw,
+            route_name=normalized_category,
+            stage_raw=stage_raw,
+            stage_valid=stage_valid,
+            stage_contexts=stage_contexts,
+            stage_cdm_contexts=stage_cdm_contexts,
+            stage_rejected=stage_rejected,
+        )
+
+    apply_core_backfill_to_stage(
+        pipeline_mod=pipeline_mod,
+        retriever=retriever,
+        ocr_text=ocr_text,
+        stage_raw=stage_raw,
+        stage_valid=stage_valid,
+        stage_contexts=stage_contexts,
+        stage_cdm_contexts=stage_cdm_contexts,
+        stage_rejected=stage_rejected,
+    )
+    return stage_raw, stage_valid, stage_contexts, stage_cdm_contexts, stage_rejected
 
 
 async def map_ocr_text_single_agent(
@@ -1833,32 +2042,30 @@ async def run(args: argparse.Namespace) -> None:
     if args.pipeline_mode != "ocr_only":
         map_page_dir.mkdir(parents=True, exist_ok=True)
 
-    map_agent_count = max(1, int(args.map_agent_count))
-    map_agent_count_by_route = build_map_agent_count_by_route(args, pipeline_mod)
-    max_route_agent_count = max([map_agent_count] + list(map_agent_count_by_route.values()))
+    active_category_count = len(getattr(pipeline_mod, "PATIENT_MAP_CATEGORIES", ()))
     requested_map_agent_model_ids = parse_model_id_list(args.map_agent_model_ids)
     if requested_map_agent_model_ids:
         if len(requested_map_agent_model_ids) == 1:
-            map_agent_model_ids = requested_map_agent_model_ids * max_route_agent_count
-        elif len(requested_map_agent_model_ids) == max_route_agent_count:
+            map_agent_model_ids = requested_map_agent_model_ids * max(1, active_category_count)
+        elif len(requested_map_agent_model_ids) == max(1, active_category_count):
             map_agent_model_ids = requested_map_agent_model_ids
         else:
             raise ValueError(
-                "--map_agent_model_ids length must be 1 or match the effective maximum map-agent count. "
-                f"Got {len(requested_map_agent_model_ids)} vs {max_route_agent_count}."
+                "--map_agent_model_ids length must be 1 or match the number of active map categories. "
+                f"Got {len(requested_map_agent_model_ids)} vs {max(1, active_category_count)}."
             )
     else:
-        map_agent_model_ids = [str(args.map_model_id)] * max_route_agent_count
+        map_agent_model_ids = [str(args.map_model_id)] * max(1, active_category_count)
 
-    route_model_id = str(args.route_model_id or "").strip() or str(args.map_model_id)
+    category_split_model_id = str(getattr(args, "category_split_model_id", "") or args.route_model_id or "").strip() or str(args.map_model_id)
     resolver_model_id = str(args.resolver_model_id or "").strip() or str(args.map_model_id)
     map_backend_kind_by_model = {
         model_id: resolve_text_backend_name(model_id) for model_id in sorted(set(map_agent_model_ids))
     }
-    route_backend_kind = (
+    category_split_backend_kind = (
         "shared_map_backend"
-        if route_model_id in map_backend_kind_by_model
-        else resolve_text_backend_name(route_model_id)
+        if category_split_model_id in map_backend_kind_by_model
+        else resolve_text_backend_name(category_split_model_id)
     )
     resolver_backend_kind = (
         "shared_map_backend"
@@ -1875,17 +2082,16 @@ async def run(args: argparse.Namespace) -> None:
         "reuse_ocr_dir": str(reuse_ocr_dir) if reuse_ocr_dir is not None else "",
         "ocr_model_id": args.ocr_model_id,
         "ocr_backend": ocr_mod.resolve_backend_name(args.ocr_model_id) if not reuse_ocr_dir else "reused_frozen_ocr",
-        "route_model_id": route_model_id,
-        "route_backend": route_backend_kind,
+        "processing_design": "patient_level_category_mapping",
+        "category_split_model_id": category_split_model_id,
+        "category_split_backend": category_split_backend_kind,
+        "map_categories": list(getattr(pipeline_mod, "PATIENT_MAP_CATEGORIES", ())),
         "map_model_id": args.map_model_id,
         "map_backend": resolve_text_backend_name(args.map_model_id),
         "map_agent_model_ids": map_agent_model_ids,
         "map_agent_backend_by_model": map_backend_kind_by_model,
         "resolver_model_id": resolver_model_id,
         "resolver_backend": resolver_backend_kind,
-        "map_bundle_size": max(1, int(args.map_bundle_size)),
-        "map_agent_count": map_agent_count,
-        "map_agent_count_by_route": map_agent_count_by_route,
         "enable_recall": bool(args.enable_recall),
         "disable_conflict_resolver": bool(args.disable_conflict_resolver or args.pipeline_mode != "ocr_map_resolve"),
         "map_json_retry_attempts": max(1, int(args.map_json_retry_attempts)),
@@ -1931,12 +2137,12 @@ async def run(args: argparse.Namespace) -> None:
         for backend in sorted(set(map_agent_backends), key=id):
             await maybe_warm_backend(backend)
 
-    route_backend: TextAgent
-    if route_model_id in map_backends_by_model:
-        route_backend = map_backends_by_model[route_model_id]
+    category_split_backend: TextAgent
+    if category_split_model_id in map_backends_by_model:
+        category_split_backend = map_backends_by_model[category_split_model_id]
     else:
-        route_backend = build_text_backend(
-            model_id=route_model_id,
+        category_split_backend = build_text_backend(
+            model_id=category_split_model_id,
             max_new_tokens=args.route_max_new_tokens,
             temperature=args.route_temperature,
             top_p=args.route_top_p,
@@ -1953,15 +2159,15 @@ async def run(args: argparse.Namespace) -> None:
             rate_limit_margin=args.rate_limit_margin,
         )
         if args.preload_map_model:
-            await maybe_warm_backend(route_backend)
+            await maybe_warm_backend(category_split_backend)
 
     conflict_backend: Optional[TextAgent]
     if args.disable_conflict_resolver or args.pipeline_mode != "ocr_map_resolve":
         conflict_backend = None
     elif resolver_model_id in map_backends_by_model:
         conflict_backend = map_backends_by_model[resolver_model_id]
-    elif resolver_model_id == route_model_id:
-        conflict_backend = route_backend
+    elif resolver_model_id == category_split_model_id:
+        conflict_backend = category_split_backend
     else:
         conflict_backend = build_text_backend(
             model_id=resolver_model_id,
@@ -2153,6 +2359,9 @@ async def run(args: argparse.Namespace) -> None:
     ordered_ocr_pairs = [(img, txt) for img in images for src_img, txt in ocr_pairs if src_img.name == img.name]
     ocr_merged_text = pipeline_mod.merge_ocr_text_blocks([(img.name, txt) for img, txt in ordered_ocr_pairs])
     (output_dir / f"{patient_name}_ocr_merged.txt").write_text(ocr_merged_text, encoding="utf-8")
+    if hasattr(pipeline_mod, "build_numbered_merged_ocr_text"):
+        numbered_ocr_text = pipeline_mod.build_numbered_merged_ocr_text(ocr_merged_text)
+        (output_dir / f"{patient_name}_ocr_merged_numbered.txt").write_text(numbered_ocr_text, encoding="utf-8")
 
     if args.pipeline_mode == "ocr_only":
         summary = {
@@ -2167,85 +2376,48 @@ async def run(args: argparse.Namespace) -> None:
         logger.info("OCR-only run complete: %s", json.dumps(summary, ensure_ascii=False))
         return
 
-    bundles = pipeline_mod.chunked(ordered_ocr_pairs, max(1, int(args.map_bundle_size)))
-    bundle_records: List[Dict[str, Any]] = []
-    for idx, bundle in enumerate(bundles, start=1):
-        image_names = [img.name for img, _ in bundle]
-        bundle_name = pipeline_mod.make_bundle_image_name(idx, image_names)
-        merged_text = pipeline_mod.merge_ocr_text_blocks([(img.name, txt) for img, txt in bundle]).strip()
-        if not merged_text:
-            page_errors.append({"image": bundle_name, "error_type": "EmptyMergedOCR", "error": "Merged OCR text is empty"})
-            continue
-        bundle_records.append(
-            {
-                "idx": idx,
-                "bundle": bundle,
-                "bundle_name": bundle_name,
-                "image_names": image_names,
-                "merged_text": merged_text,
-            }
-        )
-
-    route_results: Dict[str, Dict[str, Any]] = {}
-
-    async def _route_one(record: Dict[str, Any]) -> None:
-        bundle_name = record["bundle_name"]
-        merged_text = record["merged_text"]
-        route_info = await route_ocr_text(
-            llm=route_backend,
-            pipeline_mod=pipeline_mod,
-            ocr_text=merged_text,
-            max_attempts=max(1, min(2, int(args.map_json_retry_attempts))),
-        )
-        route_results[bundle_name] = route_info
-
-    route_tasks = [asyncio.create_task(_route_one(record)) for record in bundle_records]
-    for fut in asyncio.as_completed(route_tasks):
-        await fut
-
-    official_tag_by_bundle = pipeline_mod.classify_official_questionnaire_sequence(
-        [
-            {
-                "bundle_name": record["bundle_name"],
-                "route_name": str(route_results.get(record["bundle_name"], {}).get("route") or pipeline_mod.DEFAULT_MAP_ROUTE),
-                "ocr_text": record["merged_text"],
-            }
-            for record in bundle_records
-        ]
+    image_name_text_pairs = [(img.name, txt) for img, txt in ordered_ocr_pairs]
+    category_records = await split_patient_ocr_categories(
+        llm=category_split_backend,
+        pipeline_mod=pipeline_mod,
+        image_name_text_pairs=image_name_text_pairs,
+        max_attempts=max(1, min(2, int(args.map_json_retry_attempts))),
     )
+    (output_dir / "category_split_result.json").write_text(
+        json.dumps(category_records, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    for record in category_records:
+        (map_page_dir / f"category__{record['category']}.txt").write_text(
+            str(record["merged_text"]),
+            encoding="utf-8",
+        )
 
     page_results: List[Any] = []
 
     async def _map_one(record: Dict[str, Any]) -> None:
         async with map_sem:
             idx = int(record["idx"])
-            image_names = record["image_names"]
-            bundle_name = record["bundle_name"]
-            merged_text = record["merged_text"]
-            route_info = route_results.get(bundle_name) or pipeline_mod.classify_map_route_heuristic(merged_text)
-            official_info = official_tag_by_bundle.get(bundle_name) or {
-                "official_questionnaire": False,
-                "official_family": "NON",
-            }
+            map_category = str(record["category"])
+            source_images = list(record["source_images"])
+            merged_text = str(record["merged_text"])
+            category_name = f"category__{map_category}"
 
             t0 = time.perf_counter()
             try:
-                raw_obj, valid_obj, valid_contexts, valid_cdm_contexts, rejected_fields = await map_ocr_text_multi_agent(
-                    llm=map_agent_backends,
+                backend = map_agent_backends[(idx - 1) % max(1, len(map_agent_backends))]
+                raw_obj, valid_obj, valid_contexts, valid_cdm_contexts, rejected_fields = await map_ocr_text_for_category(
+                    llm=backend,
                     pipeline_mod=pipeline_mod,
                     retriever=retriever,
                     ocr_text=merged_text,
-                    map_agent_count=map_agent_count,
-                    map_agent_count_by_route=map_agent_count_by_route,
-                    route_name=str(route_info.get("route") or pipeline_mod.DEFAULT_MAP_ROUTE),
-                    official_questionnaire=bool(official_info.get("official_questionnaire")),
-                    official_family=str(official_info.get("official_family") or "NON"),
+                    map_category=map_category,
                     json_retry_attempts=args.map_json_retry_attempts,
                     enable_recall=args.enable_recall,
                 )
                 page_results.append(
                     pipeline_mod.PageResult(
-                        image_name=bundle_name,
+                        image_name=category_name,
                         ocr_text=merged_text,
                         raw_json=raw_obj,
                         valid_json=valid_obj,
@@ -2254,15 +2426,33 @@ async def run(args: argparse.Namespace) -> None:
                         rejected_fields=rejected_fields,
                     )
                 )
-                (map_page_dir / f"{Path(bundle_name).stem}.raw.json").write_text(
+                owned_rows = retriever.category_rows(map_category, include_basic=True)
+                owned_keys_payload = {
+                    "category": map_category,
+                    "owned_key_count": len(owned_rows),
+                    "mapped_key_count": len(valid_obj),
+                    "unmapped_key_count": sum(1 for row in owned_rows if row.key not in valid_obj),
+                    "owned_keys": [
+                        {
+                            "key": row.key,
+                            "map_category": getattr(row, "map_category", ""),
+                            "mapped": row.key in valid_obj,
+                            "value": valid_obj.get(row.key, ""),
+                            "CDM_Context": valid_cdm_contexts.get(row.key, str(getattr(row, "desc", "") or "").strip()),
+                            "input_context": valid_contexts.get(row.key, {}) if row.key in valid_obj else {},
+                        }
+                        for row in owned_rows
+                    ],
+                }
+                (map_page_dir / f"{category_name}.raw.json").write_text(
                     json.dumps(raw_obj, ensure_ascii=False, indent=2),
                     encoding="utf-8",
                 )
-                (map_page_dir / f"{Path(bundle_name).stem}.valid.json").write_text(
+                (map_page_dir / f"{category_name}.valid.json").write_text(
                     json.dumps(valid_obj, ensure_ascii=False, indent=2),
                     encoding="utf-8",
                 )
-                (map_page_dir / f"{Path(bundle_name).stem}.contexts.json").write_text(
+                (map_page_dir / f"{category_name}.contexts.json").write_text(
                     json.dumps(
                         {
                             k: {
@@ -2276,8 +2466,12 @@ async def run(args: argparse.Namespace) -> None:
                     ),
                     encoding="utf-8",
                 )
+                (map_page_dir / f"{category_name}.owned_keys.json").write_text(
+                    json.dumps(owned_keys_payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
                 if rejected_fields:
-                    (map_page_dir / f"{Path(bundle_name).stem}.rejected.json").write_text(
+                    (map_page_dir / f"{category_name}.rejected.json").write_text(
                         json.dumps(rejected_fields, ensure_ascii=False, indent=2),
                         encoding="utf-8",
                     )
@@ -2285,44 +2479,36 @@ async def run(args: argparse.Namespace) -> None:
                 valid_count = len(valid_obj)
                 error = ""
             except Exception as exc:
-                route_info = pipeline_mod.classify_map_route_heuristic(merged_text)
                 ok = False
                 valid_count = 0
                 error = f"{type(exc).__name__}: {exc}"
-                page_errors.append({"image": bundle_name, "error_type": type(exc).__name__, "error": str(exc)})
+                page_errors.append({"image": category_name, "error_type": type(exc).__name__, "error": str(exc)})
 
         meta = {
-            "bundle": bundle_name,
-            "source_images": image_names,
-            "map_route": route_info.get("route"),
-            "map_route_confidence": route_info.get("confidence"),
-            "map_route_report_score": route_info.get("report_score"),
-            "map_route_extensive_report_score": route_info.get("extensive_report_score"),
-            "map_route_morning_score": route_info.get("morning_score"),
-            "map_route_night_score": route_info.get("night_score"),
-            "map_route_reason": route_info.get("reason"),
-            "official_questionnaire": bool(official_info.get("official_questionnaire")),
-            "official_questionnaire_family": str(official_info.get("official_family") or "NON"),
+            "category": map_category,
+            "source_images": source_images,
             "ok": ok,
             "elapsed_seconds": time.perf_counter() - t0,
             "valid_keys": valid_count,
             "error": error,
         }
-        (map_page_dir / f"{Path(bundle_name).stem}.meta.json").write_text(
+        (map_page_dir / f"{category_name}.meta.json").write_text(
             json.dumps(meta, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         logger.info(
             "MAP %d/%d | %s | ok=%s | elapsed=%.1fs | valid_keys=%d",
             idx,
-            len(bundles),
-            bundle_name,
+            len(category_records),
+            category_name,
             ok,
             meta["elapsed_seconds"],
             valid_count,
         )
 
-    map_tasks = [asyncio.create_task(_map_one(record)) for record in bundle_records]
+    for idx, record in enumerate(category_records, start=1):
+        record["idx"] = idx
+    map_tasks = [asyncio.create_task(_map_one(record)) for record in category_records]
     for fut in asyncio.as_completed(map_tasks):
         await fut
 
@@ -2380,14 +2566,14 @@ async def run(args: argparse.Namespace) -> None:
     )
 
     ocr_usage_summary = summarize_openai_usage(ocr_backend) if ocr_backend is not None else {}
-    route_usage_summary = summarize_openai_usage(route_backend)
+    category_split_usage_summary = summarize_openai_usage(category_split_backend)
     map_usage_summary = summarize_openai_usage(*map_agent_backends)
     resolver_usage_summary = summarize_openai_usage(conflict_backend)
-    unique_usage_records = collect_usage_records(ocr_backend, route_backend, *map_agent_backends, conflict_backend)
+    unique_usage_records = collect_usage_records(ocr_backend, category_split_backend, *map_agent_backends, conflict_backend)
     rate_limit_usage_summary = summarize_usage_records(unique_usage_records)
     combined_usage_summary = {
         "ocr": ocr_usage_summary,
-        "route": route_usage_summary,
+        "category_split": category_split_usage_summary,
         "map": map_usage_summary,
         "resolver": resolver_usage_summary,
         "totals": {
@@ -2415,7 +2601,7 @@ async def run(args: argparse.Namespace) -> None:
         "ocr_ok": len(ordered_ocr_pairs),
         "ocr_fail": len(images) - len(ordered_ocr_pairs),
         "map_ok": len(page_results),
-        "map_fail": len(bundles) - len(page_results),
+        "map_fail": len(category_records) - len(page_results),
         "duplicates_dropped": len(duplicates),
         "total_elapsed_seconds": time.perf_counter() - started,
         "output_row_non_null_keys": (
@@ -2453,12 +2639,13 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--reuse_ocr_dir", type=str, default="", help="Reuse existing OCR txt/meta files from a prior run's ocr_pages dir")
 
     ap.add_argument("--output_dir", type=str, required=True)
-    ap.add_argument("--cdm_csv", type=str, default="cdm_revised.csv")
+    ap.add_argument("--cdm_csv", type=str, default="cdm_new.csv")
     ap.add_argument("--example_csv", type=str, default="example.csv")
     ap.add_argument("--pipeline_mode", type=str, default="ocr_map_resolve", choices=["ocr_only", "ocr_map", "ocr_map_resolve"])
 
     ap.add_argument("--ocr_model_id", type=str, default="gpt-5.4")
-    ap.add_argument("--route_model_id", type=str, default="", help="Defaults to map_model_id when empty")
+    ap.add_argument("--category_split_model_id", type=str, default="", help="Defaults to map_model_id when empty")
+    ap.add_argument("--route_model_id", type=str, default="", help="Deprecated legacy alias for category split model")
     ap.add_argument("--map_model_id", type=str, default="gpt-5.4")
     ap.add_argument(
         "--map_agent_model_ids",
