@@ -35,6 +35,8 @@ RATE_LIMITER_REGISTRY = RateLimiterRegistry()
 PHX_CHECKLIST_TRIGGER = "다음과 같은 질환을 앓고 있거나 과거에 앓은 적이 있습니까?"
 PHX_EXPECTED_YES_NO_TOTAL = 28
 PHX_OCR_MAX_ATTEMPTS = 3
+BUNDLE_SPLIT_POST_VALIDATION_MAX_RETRIES = 3
+BUNDLE_SPLIT_HARD_COVERAGE_MIN_RATIO = 0.75
 
 
 def resolve_script_path(path_str: str) -> Path:
@@ -961,11 +963,10 @@ def _build_balanced_page_bundles(
             best_diff = diff
             best_split_idx = split_idx
 
-    overlap_pages = 1 if len(page_blocks) >= 3 else 0
     left_core = page_blocks[:best_split_idx]
     right_core = page_blocks[best_split_idx:]
-    left_blocks = page_blocks[: min(len(page_blocks), best_split_idx + overlap_pages)]
-    right_blocks = page_blocks[max(0, best_split_idx - overlap_pages) :]
+    left_blocks = left_core
+    right_blocks = right_core
 
     bundles = [
         {
@@ -998,10 +999,24 @@ def _build_balanced_page_bundles(
                 "core_char_total": int(bundle["core_char_total"]),
                 "source_images": [str(block["image_name"]) for block in blocks],
                 "core_source_images": [str(block["image_name"]) for block in bundle["core_blocks"]],
-                "overlap_pages": overlap_pages,
+                "overlap_pages": 0,
             }
         )
     return out
+
+
+def _build_full_span_bundle(page_blocks: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    blocks = list(page_blocks or [])
+    return {
+        "bundle_id": 1,
+        "blocks": blocks,
+        "char_total": sum(int(block["char_count"]) for block in blocks),
+        "core_blocks": blocks,
+        "core_char_total": sum(int(block["char_count"]) for block in blocks),
+        "source_images": [str(block["image_name"]) for block in blocks],
+        "core_source_images": [str(block["image_name"]) for block in blocks],
+        "overlap_pages": 0,
+    }
 
 
 def _build_bundle_numbered_excerpt(bundle: Dict[str, Any]) -> str:
@@ -1015,77 +1030,281 @@ def _build_bundle_numbered_excerpt(bundle: Dict[str, Any]) -> str:
 def _build_bundle_split_user_prompt(
     pipeline_mod: Any,
     bundle: Dict[str, Any],
+    validation_feedback: str = "",
 ) -> str:
     categories = list(getattr(pipeline_mod, "PATIENT_MAP_CATEGORIES", ()))
     output_lines = [f'  "{category}": [{{"start_line": 1, "end_line": 2}}]' for category in categories]
     output_schema = "{\n" + ",\n".join(output_lines) + "\n}"
     numbered_excerpt = _build_bundle_numbered_excerpt(bundle)
-    bundle_id = int(bundle.get("bundle_id") or 0)
     category_count = len(categories)
-    source_images = "\n".join(f"  - {name}" for name in bundle.get("source_images") or [])
-    overlap_pages = int(bundle.get("overlap_pages") or 0)
-    return f"""MERGED PATIENT OCR TEXT EXCERPT
-This excerpt contains one contiguous page slice from a patient, with optional page overlap for context.
-The numbered lines below use the ORIGINAL global merged OCR line numbers.
-Small numbering gaps may appear only because the merged OCR inserts blank separator lines between pages.
-Use only the shown line numbers when selecting ranges.
+    blocks = list(bundle.get("blocks") or [])
+    visible_min_line = int(blocks[0]["line_start"]) if blocks else 0
+    visible_max_line = int(blocks[-1]["line_end"]) if blocks else 0
+    category_descriptions = getattr(pipeline_mod, "MAP_CATEGORY_DESCRIPTIONS", {}) or {}
+    category_guidance_text = "\n".join(
+        f"- `{category}`: {str(category_descriptions.get(category, '')).strip()}"
+        for category in categories
+    )
+    feedback_block = ""
+    if validation_feedback.strip():
+        feedback_block = f"""
+VALIDATION FEEDBACK FROM THE PREVIOUS ATTEMPT
+- {validation_feedback.strip().replace(chr(10), chr(10) + '- ')}
+"""
+    return f"""
+TASK
+1. "Categorize" the visible OCR text spans into the following {category_count} categories.
+2. "Split" the visible OCR text spans that belong to each category into line-range selections, without copying the actual text.
+3. The line ranges splitted into each category will be your final output. Do not output any text beyond the line numbers.
 
+Guidelines
+1. Allowed categories are:
+{category_guidance_text}
+2. Each relevant OCR text span should belong to exactly one best-fit category.
+- Prefer exact questionnaire/report titles, item wording, and unmistakable page content. Useful title/pattern hints are:
+{pipeline_mod.build_split_pattern_hint_text()}
+3. The unit of assignment is relevant OCR text span. A single page may contain multiple categories. A single category may span multiple pages.
+- Find ALL relevant text spans for each category across the visible OCR text.
+- Select the exact line ranges from the numbered text that belong to each category.
+- Use the EXACT line numbers as shown in the text. Do NOT invent line numbers that are not shown.
+4. Categories may repeat across non-adjacent pages.
+- Use one or more line ranges when a category appears in multiple separated parts of the merged OCR text.
+- Merge them into one final text block per category.
+5. If there is no relevant text for a category, return an empty list for that category.
+6. Before finalizing, check whether any visible text spans remain uncategorized. If so, assign them to the best-fitting category. 
+
+Caution
+- Do NOT invent categories that are not in the allowed list.
+- Do NOT output copied OCR text directly. Output only line ranges.
+- Do NOT include line ranges that contain only [SOURCE_IMAGE: ...] marker lines
+- Do NOT invent ranges for line numbers that are not shown in the merged patient OCR text above.
+- Do NOT reference lines outside the shown excerpt. Visible line span in this excerpt is: L{visible_min_line:04d}-L{visible_max_line:04d}
+- Do NOT duplicate the same OCR text span into multiple categories.
+- Do NOT leave any relevant text and lines uncategorized. If you are unsure, make your best guess.
+
+Feedback Message from the previous attempt (if any):
+{feedback_block}
+
+INPUTS:
 \"\"\"{numbered_excerpt}\"\"\"
 
-INPUTS
-- Excerpted merged patient OCR text above
-- Bundle id: {bundle_id}
-- Context overlap pages on each side: {overlap_pages}
-- Included source images:
-{source_images}
-
-ROLE
-- You are a patient-level OCR text categorization and splitting agent for a sleep-clinic pipeline.
-
-TASK
-- Split the OCR excerpt into {category_count} map-category line-range selections.
-- The unit of assignment is relevant OCR text span, represented as line ranges in the numbered OCR excerpt above.
-- Each relevant OCR text span should belong to exactly one best-fit category.
-
-HELPFUL CONTEXTS
-- Useful title / pattern hints from previous logic:
-{pipeline_mod.build_split_pattern_hint_text()}
-- A single page may contain multiple categories.
-- A single category may span multiple pages.
-- Categories may repeat across non-adjacent pages and should be merged into one final text block per category.
-
-GUIDELINES / RULES
-- Do not output copied OCR text directly. Output only line ranges.
-- Do not paraphrase, summarize, normalize, translate, correct, or rewrite OCR text.
-- Select the exact line ranges from the numbered OCR excerpt that belong to each category.
-- Use one or more line ranges when a category appears in multiple separated parts of the excerpt.
-- Do not include line ranges that contain only `[SOURCE_IMAGE: ...]` marker lines.
-- You may select only the relevant part of a page; you do not need to select the entire page if only part of it belongs to the category.
-- Prefer exact questionnaire/report titles, item wording, and unmistakable page content.
-- Do not leave recognized question lines unassigned within the shown excerpt.
-- Before finalizing, check whether any visible question/title lines in the shown excerpt remain uncategorized.
-- Use `basic` for identity, demographics, anthropometrics, PSG identifiers, occupation, and shift-work text.
-- Use `psg` for PSG reports and PSG signal/report pages.
-- Use `cpap` for CPAP reports and CPAP pressure-step titration sections.
-- Use `mq` for the morning questionnaire (`아침 질문 사항`).
-- Use `phx_habit` for lifestyle habits, medical-history checklist, and family-history questionnaire text.
-- Use `sleep_behavior` for general sleep-history, wake frequency, nap, sleep sufficiency, and narcolepsy-style symptom questionnaire text.
-- If there is no relevant text for a category in the shown excerpt, return an empty list for that category.
-
-CAUTIONS
-- Do not assign by whole-page if only part of the page belongs to the category.
-- Do not duplicate the same OCR text span into multiple categories.
-- Do not invent categories outside the allowed set.
-- Do not emit copied text, explanations, source-image names, or any metadata beyond the required line ranges.
-- The line numbers are global patient line numbers, not local bundle line numbers. Preserve them exactly.
-- Do not invent ranges for line numbers that are not shown in the excerpt.
-
 OUTPUT FORMAT
-- Return ONE flat JSON object only.
-- Do not wrap the JSON inside another key.
+- Return ONE flat JSON object only. Do not wrap the JSON inside another key.
 - Use exactly these {category_count} keys:
 {output_schema}
 """
+
+def _build_bundle_visible_line_items(bundle: Dict[str, Any]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for block in bundle.get("blocks") or []:
+        out.extend(list(block.get("line_items") or []))
+    return out
+
+
+def _range_map_line_set(
+    pipeline_mod: Any,
+    range_map: Dict[str, List[Dict[str, int]]],
+    category: Optional[str] = None,
+) -> set[int]:
+    covered: set[int] = set()
+    categories: Sequence[str]
+    if category is None:
+        categories = list(getattr(pipeline_mod, "PATIENT_MAP_CATEGORIES", ()))
+    else:
+        categories = [category]
+    for key in categories:
+        for item in pipeline_mod.normalize_line_ranges((range_map or {}).get(key, [])):
+            start = int(item["start_line"])
+            end = int(item["end_line"])
+            covered.update(range(start, end + 1))
+    return covered
+
+
+def _validate_bundle_range_map(
+    pipeline_mod: Any,
+    bundle: Dict[str, Any],
+    range_map: Dict[str, List[Dict[str, int]]],
+) -> Dict[str, Any]:
+    visible_line_items = _build_bundle_visible_line_items(bundle)
+    visible_lines = [int(item["global_line"]) for item in visible_line_items]
+    visible_line_set = set(visible_lines)
+    bundle_min = min(visible_lines) if visible_lines else 0
+    bundle_max = max(visible_lines) if visible_lines else 0
+
+    hard_invalid_ranges: List[Dict[str, Any]] = []
+    soft_invalid_ranges: List[Dict[str, Any]] = []
+    categories = list(getattr(pipeline_mod, "PATIENT_MAP_CATEGORIES", ()))
+    for category in categories:
+        for item in pipeline_mod.normalize_line_ranges((range_map or {}).get(category, [])):
+            start = int(item["start_line"])
+            end = int(item["end_line"])
+            if start < bundle_min or end > bundle_max:
+                hard_invalid_ranges.append(
+                    {
+                        "category": category,
+                        "start_line": start,
+                        "end_line": end,
+                    }
+                )
+                continue
+            if any(line_no not in visible_line_set for line_no in range(start, end + 1)):
+                soft_invalid_ranges.append(
+                    {
+                        "category": category,
+                        "start_line": start,
+                        "end_line": end,
+                    }
+                )
+
+    total_covered = _range_map_line_set(pipeline_mod, range_map)
+    informative_visible_lines = [
+        int(item["global_line"])
+        for item in visible_line_items
+        if pipeline_mod.is_informative_ocr_line(str(item.get("text") or ""))
+    ]
+    informative_visible_set = set(informative_visible_lines)
+    informative_total = len(informative_visible_lines)
+    informative_covered = len(informative_visible_set & total_covered)
+    informative_coverage_ratio = (
+        float(informative_covered) / float(informative_total)
+        if informative_total > 0
+        else 1.0
+    )
+
+    hard_coverage_failures: List[str] = []
+    if informative_total > 0 and informative_coverage_ratio < BUNDLE_SPLIT_HARD_COVERAGE_MIN_RATIO:
+        hard_coverage_failures.append(
+            "informative coverage ratio "
+            f"{informative_coverage_ratio:.3f} "
+            f"({informative_covered}/{informative_total}) is below the minimum "
+            f"{BUNDLE_SPLIT_HARD_COVERAGE_MIN_RATIO:.2f}"
+        )
+
+    return {
+        "bundle_id": int(bundle.get("bundle_id") or 0),
+        "bundle_min_line": bundle_min,
+        "bundle_max_line": bundle_max,
+        "hard_invalid_ranges": hard_invalid_ranges,
+        "soft_invalid_ranges": soft_invalid_ranges,
+        "hard_invalid_count": len(hard_invalid_ranges),
+        "soft_invalid_count": len(soft_invalid_ranges),
+        "informative_visible_line_count": informative_total,
+        "informative_covered_line_count": informative_covered,
+        "informative_coverage_ratio": informative_coverage_ratio,
+        "hard_coverage_failures": hard_coverage_failures,
+        "needs_retry": bool(hard_invalid_ranges or hard_coverage_failures),
+    }
+
+
+def _build_bundle_retry_feedback(validation: Dict[str, Any]) -> str:
+    lines: List[str] = []
+    if validation.get("hard_invalid_ranges"):
+        lines.append(
+            "Your previous output referenced line numbers outside the visible excerpt span "
+            f"L{int(validation.get('bundle_min_line') or 0):04d}-L{int(validation.get('bundle_max_line') or 0):04d}."
+        )
+        for item in list(validation.get("hard_invalid_ranges") or [])[:5]:
+            lines.append(
+                f"Invalid range: {item['category']} {int(item['start_line'])}-{int(item['end_line'])}."
+            )
+    for failure in validation.get("hard_coverage_failures") or []:
+        lines.append(str(failure))
+    lines.append("Correct the ranges and return JSON only.")
+    return "\n".join(lines)
+
+
+async def _run_validated_bundle_split(
+    llm: TextAgent,
+    pipeline_mod: Any,
+    bundle: Dict[str, Any],
+    image_name_text_pairs: Sequence[Tuple[str, str]],
+    max_attempts: int,
+    debug_output_dir: Optional[Path] = None,
+    debug_name: Optional[str] = None,
+) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, int]]], Dict[str, Any]]:
+    bundle_id = int(bundle["bundle_id"])
+    last_raw: Dict[str, Any] = {}
+    last_range_map: Dict[str, List[Dict[str, int]]] = {}
+    last_validation: Dict[str, Any] = {}
+    retry_feedback = ""
+    attempt_debug: List[Dict[str, Any]] = []
+    max_bundle_attempts = 1 + max(0, int(BUNDLE_SPLIT_POST_VALIDATION_MAX_RETRIES))
+    debug_prefix = debug_name or f"category_split_bundle_{bundle_id}"
+
+    for attempt_idx in range(1, max_bundle_attempts + 1):
+        raw = await text_to_json(
+            llm=llm,
+            system_prompt=pipeline_mod.CATEGORY_SPLIT_SYSTEM,
+            user_text=_build_bundle_split_user_prompt(
+                pipeline_mod,
+                bundle,
+                validation_feedback=retry_feedback,
+            ),
+            pipeline_mod=pipeline_mod,
+            schema_hint=build_category_split_schema_hint(),
+            max_attempts=max_attempts,
+            label=f"{debug_prefix}_attempt_{attempt_idx}",
+        )
+        range_map = _extract_category_range_map(pipeline_mod, raw)
+        validation = _validate_bundle_range_map(pipeline_mod, bundle, range_map)
+        attempt_debug.append(
+            {
+                "attempt": attempt_idx,
+                "validation": validation,
+            }
+        )
+        if debug_output_dir is not None:
+            (debug_output_dir / f"{debug_prefix}_attempt_{attempt_idx}_raw.json").write_text(
+                json.dumps(raw, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            (debug_output_dir / f"{debug_prefix}_attempt_{attempt_idx}_validation.json").write_text(
+                json.dumps(validation, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+        last_raw = raw
+        last_range_map = range_map
+        last_validation = validation
+        if not validation.get("needs_retry"):
+            break
+        if attempt_idx < max_bundle_attempts:
+            retry_feedback = _build_bundle_retry_feedback(validation)
+            logger.warning(
+                "Bundle split validation retry requested for bundle %s attempt %s: %s",
+                bundle_id,
+                attempt_idx,
+                "; ".join(validation.get("hard_coverage_failures") or [])
+                or f"hard_invalid={int(validation.get('hard_invalid_count') or 0)}",
+            )
+
+    if debug_output_dir is not None:
+        (debug_output_dir / f"{debug_prefix}_retry_history.json").write_text(
+            json.dumps(attempt_debug, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        (debug_output_dir / f"{debug_prefix}_raw.json").write_text(
+            json.dumps(last_raw, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        bundle_preview = pipeline_mod.preview_raw_category_split_decision(last_raw, image_name_text_pairs)
+        (debug_output_dir / f"{debug_prefix}_preview.json").write_text(
+            json.dumps(bundle_preview, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        (debug_output_dir / f"{debug_prefix}_validation.json").write_text(
+            json.dumps(last_validation, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    if last_validation.get("needs_retry"):
+        raise RuntimeError(
+            f"bundle {bundle_id} split validation failed after {max_bundle_attempts} attempts: "
+            f"hard_invalid={int(last_validation.get('hard_invalid_count') or 0)}, "
+            f"hard_coverage_failures={len(last_validation.get('hard_coverage_failures') or [])}"
+        )
+
+    return last_raw, last_range_map, last_validation
 
 
 def _extract_category_range_map(
@@ -1158,30 +1377,21 @@ async def _run_parallel_bundle_split(
             encoding="utf-8",
         )
 
-    async def _run_one(bundle: Dict[str, Any]) -> Dict[str, List[Dict[str, int]]]:
-        bundle_id = int(bundle["bundle_id"])
-        raw = await text_to_json(
-            llm=llm,
-            system_prompt=pipeline_mod.CATEGORY_SPLIT_SYSTEM,
-            user_text=_build_bundle_split_user_prompt(pipeline_mod, bundle),
-            pipeline_mod=pipeline_mod,
-            schema_hint=build_category_split_schema_hint(),
-            max_attempts=max_attempts,
-            label=f"category_split_bundle_{bundle_id}",
-        )
-        if debug_output_dir is not None:
-            (debug_output_dir / f"category_split_bundle_{bundle_id}_raw.json").write_text(
-                json.dumps(raw, ensure_ascii=False, indent=2),
-                encoding="utf-8",
+    results = await asyncio.gather(
+        *[
+            _run_validated_bundle_split(
+                llm=llm,
+                pipeline_mod=pipeline_mod,
+                bundle=bundle,
+                image_name_text_pairs=image_name_text_pairs,
+                max_attempts=max_attempts,
+                debug_output_dir=debug_output_dir,
+                debug_name=f"category_split_bundle_{int(bundle['bundle_id'])}",
             )
-            bundle_preview = pipeline_mod.preview_raw_category_split_decision(raw, image_name_text_pairs)
-            (debug_output_dir / f"category_split_bundle_{bundle_id}_preview.json").write_text(
-                json.dumps(bundle_preview, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-        return _extract_category_range_map(pipeline_mod, raw)
-
-    range_maps = await asyncio.gather(*[_run_one(bundle) for bundle in bundles])
+            for bundle in bundles
+        ]
+    )
+    range_maps = [range_map for _, range_map, _ in results]
     return _merge_category_range_maps(pipeline_mod, range_maps)
 
 
@@ -1197,40 +1407,23 @@ async def split_patient_ocr_categories(
         page_blocks = _build_global_page_blocks(pipeline_mod, image_name_text_pairs)
         use_parallel_bundle_split = len(page_blocks) > 7 and len(merged_ocr_text) >= 8000
         if use_parallel_bundle_split:
-            try:
-                raw = await _run_parallel_bundle_split(
-                    llm=llm,
-                    pipeline_mod=pipeline_mod,
-                    image_name_text_pairs=image_name_text_pairs,
-                    max_attempts=max_attempts,
-                    debug_output_dir=debug_output_dir,
-                )
-            except Exception as exc:
-                logger.warning("Parallel bundle split failed, retrying with single-pass split: %s", exc)
-                raw = await text_to_json(
-                    llm=llm,
-                    system_prompt=pipeline_mod.CATEGORY_SPLIT_SYSTEM,
-                    user_text=pipeline_mod.build_category_split_user_prompt(
-                        merged_ocr_text=merged_ocr_text,
-                        source_images=[name for name, _ in image_name_text_pairs],
-                    ),
-                    pipeline_mod=pipeline_mod,
-                    schema_hint=build_category_split_schema_hint(),
-                    max_attempts=max_attempts,
-                    label="category_split",
-                )
-        else:
-            raw = await text_to_json(
+            raw = await _run_parallel_bundle_split(
                 llm=llm,
-                system_prompt=pipeline_mod.CATEGORY_SPLIT_SYSTEM,
-                user_text=pipeline_mod.build_category_split_user_prompt(
-                    merged_ocr_text=merged_ocr_text,
-                    source_images=[name for name, _ in image_name_text_pairs],
-                ),
                 pipeline_mod=pipeline_mod,
-                schema_hint=build_category_split_schema_hint(),
+                image_name_text_pairs=image_name_text_pairs,
                 max_attempts=max_attempts,
-                label="category_split",
+                debug_output_dir=debug_output_dir,
+            )
+        else:
+            full_span_bundle = _build_full_span_bundle(page_blocks)
+            raw, _, _ = await _run_validated_bundle_split(
+                llm=llm,
+                pipeline_mod=pipeline_mod,
+                bundle=full_span_bundle,
+                image_name_text_pairs=image_name_text_pairs,
+                max_attempts=max_attempts,
+                debug_output_dir=debug_output_dir,
+                debug_name="category_split_fullspan",
             )
         if debug_output_dir is not None:
             (debug_output_dir / "category_split_raw.json").write_text(
@@ -1258,37 +1451,6 @@ async def split_patient_ocr_categories(
                 json.dumps(leftover_ranges, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-        if leftover_ranges:
-            try:
-                rescue_raw = await text_to_json(
-                    llm=llm,
-                    system_prompt=pipeline_mod.CATEGORY_SPLIT_SYSTEM,
-                    user_text=pipeline_mod.build_leftover_rescue_user_prompt(
-                        merged_ocr_text=merged_ocr_text,
-                        leftover_ranges=leftover_ranges,
-                    ),
-                    pipeline_mod=pipeline_mod,
-                    schema_hint=build_category_split_schema_hint(),
-                    max_attempts=max_attempts,
-                    label="category_split_rescue",
-                )
-                if debug_output_dir is not None:
-                    (debug_output_dir / "category_split_rescue_raw.json").write_text(
-                        json.dumps(rescue_raw, ensure_ascii=False, indent=2),
-                        encoding="utf-8",
-                    )
-                records = pipeline_mod.merge_rescued_category_ranges(
-                    merged_ocr_text=merged_ocr_text,
-                    records=records,
-                    rescue_payload=rescue_raw,
-                )
-                if debug_output_dir is not None:
-                    (debug_output_dir / "category_split_after_rescue.json").write_text(
-                        json.dumps(records, ensure_ascii=False, indent=2),
-                        encoding="utf-8",
-                    )
-            except Exception as exc:
-                logger.warning("Category split leftover rescue agent failed, falling back to deterministic assignment: %s", exc)
 
         final_assigned_ranges = pipeline_mod._extract_assigned_ranges_from_records(records)
         final_leftover_ranges = pipeline_mod.extract_uncategorized_informative_ranges(

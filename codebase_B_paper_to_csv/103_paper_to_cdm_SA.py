@@ -1437,14 +1437,8 @@ MAP_CATEGORY_PROMPT_GUIDANCE: Dict[str, str] = {
 }
 
 CATEGORY_SPLIT_SYSTEM = """
-# Role: You are a patient-level OCR text categorization agent for a sleep-clinic pipeline.
-# Task: Read one merged OCR text and split it into category-specific OCR text blocks.
-
-# Core behavior
-- Follow the user prompt for the exact category set, structured rules, and JSON schema.
-- Preserve original OCR wording exactly. Do not paraphrase, normalize, translate, or rewrite.
-- Treat the assignment unit as relevant OCR text span, not whole page.
-- Return JSON only.
+ROLE
+- You are a text span categorization and splitting agent for sleep-clinic documents.
 """
 
 
