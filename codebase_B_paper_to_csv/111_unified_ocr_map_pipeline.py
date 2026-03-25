@@ -2451,6 +2451,28 @@ async def run(args: argparse.Namespace) -> None:
             encoding="utf-8",
         )
 
+    skip_map_categories = {getattr(pipeline_mod, "MAP_CATEGORY_NOT_USED", "not_used")}
+    map_records = [record for record in category_records if str(record.get("category")) not in skip_map_categories]
+    for record in category_records:
+        if str(record.get("category")) in skip_map_categories:
+            category_name = f"category__{record['category']}"
+            (map_page_dir / f"{category_name}.meta.json").write_text(
+                json.dumps(
+                    {
+                        "category": str(record.get("category")),
+                        "source_images": list(record.get("source_images") or []),
+                        "ok": True,
+                        "skipped": True,
+                        "reason": "split_only_not_used_category",
+                        "valid_keys": 0,
+                        "error": "",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
     page_results: List[Any] = []
 
     async def _map_one(record: Dict[str, Any]) -> None:
@@ -2567,16 +2589,16 @@ async def run(args: argparse.Namespace) -> None:
         logger.info(
             "MAP %d/%d | %s | ok=%s | elapsed=%.1fs | valid_keys=%d",
             idx,
-            len(category_records),
+            len(map_records),
             category_name,
             ok,
             meta["elapsed_seconds"],
             valid_count,
         )
 
-    for idx, record in enumerate(category_records, start=1):
+    for idx, record in enumerate(map_records, start=1):
         record["idx"] = idx
-    map_tasks = [asyncio.create_task(_map_one(record)) for record in category_records]
+    map_tasks = [asyncio.create_task(_map_one(record)) for record in map_records]
     for fut in asyncio.as_completed(map_tasks):
         await fut
 
@@ -2670,7 +2692,7 @@ async def run(args: argparse.Namespace) -> None:
         "ocr_ok": len(ordered_ocr_pairs),
         "ocr_fail": len(images) - len(ordered_ocr_pairs),
         "map_ok": len(page_results),
-        "map_fail": len(category_records) - len(page_results),
+        "map_fail": len(map_records) - len(page_results),
         "duplicates_dropped": len(duplicates),
         "total_elapsed_seconds": time.perf_counter() - started,
         "output_row_non_null_keys": (

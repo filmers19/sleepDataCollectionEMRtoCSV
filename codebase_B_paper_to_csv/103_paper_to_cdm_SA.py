@@ -229,6 +229,7 @@ MAP_CATEGORY_PHX_HABIT = "phx_habit"
 MAP_CATEGORY_SLEEP_BEHAVIOR = "sleep_behavior"
 MAP_CATEGORY_MQ = "mq"
 MAP_CATEGORY_COMMON_PSG = "common_psg"
+MAP_CATEGORY_NOT_USED = "not_used"
 MAP_CATEGORY_PSG = "psg"
 MAP_CATEGORY_CPAP = "cpap"
 MAP_CATEGORY_PSQI = "psqi"
@@ -442,6 +443,8 @@ def normalize_map_category_name(category_raw: Any) -> str:
     raw = str(category_raw or "").strip().lower()
     aliases = {
         "basic": MAP_CATEGORY_BASIC,
+        "not_used": MAP_CATEGORY_NOT_USED,
+        "not used": MAP_CATEGORY_NOT_USED,
         "basic_questionnaire": MAP_CATEGORY_PHX_HABIT,
         "basic questionnaire": MAP_CATEGORY_PHX_HABIT,
         "generic_questionnaire": MAP_CATEGORY_PHX_HABIT,
@@ -2078,6 +2081,50 @@ def find_basic_symptom_questionnaire_line_ranges(merged_ocr_text: str) -> List[D
     )
 
 
+def find_clinician_sleep_symptom_checklist_line_ranges(merged_ocr_text: str) -> List[Dict[str, int]]:
+    lines = str(merged_ocr_text or "").splitlines()
+    if not lines:
+        return []
+
+    entry_patterns = [
+        re.compile(pat, re.I)
+        for pat in (
+            r"^\s*(?:L\d+\s*\|\s*)?Snoring\s*/\s*Apnea\b.*(?:\[selected!|\[not selected)",
+            r"^\s*(?:L\d+\s*\|\s*)?EDS\b.*(?:\[selected!|\[not selected)",
+            r"^\s*(?:L\d+\s*\|\s*)?Cataplexy\b.*(?:\[selected!|\[not selected)",
+            r"^\s*(?:L\d+\s*\|\s*)?Sleep attack\b.*(?:\[selected!|\[not selected)",
+            r"^\s*(?:L\d+\s*\|\s*)?Hypnagogic hallucinations?\b.*(?:\[selected!|\[not selected)",
+            r"^\s*(?:L\d+\s*\|\s*)?Sleep paralysis\b.*(?:\[selected!|\[not selected)",
+            r"^\s*(?:L\d+\s*\|\s*)?Insomnia\b.*(?:\[selected!|\[not selected)",
+            r"^\s*(?:L\d+\s*\|\s*)?Morning headache\b.*(?:\[selected!|\[not selected)",
+            r"^\s*(?:L\d+\s*\|\s*)?Awakening during sleep\b.*(?:\[selected!|\[not selected)",
+        )
+    ]
+
+    ranges: List[Dict[str, int]] = []
+    idx = 1
+    while idx <= len(lines):
+        text = str(lines[idx - 1] or "")
+        if not any(p.search(text) for p in entry_patterns):
+            idx += 1
+            continue
+
+        start = idx
+        end = idx
+        probe = idx + 1
+        while probe <= len(lines):
+            probe_text = str(lines[probe - 1] or "")
+            if any(p.search(probe_text) for p in entry_patterns):
+                end = probe
+                probe += 1
+                continue
+            break
+        ranges.append({"start_line": start, "end_line": end})
+        idx = end + 1
+
+    return _merge_line_ranges(ranges)
+
+
 def find_basic_sleep_history_line_ranges(merged_ocr_text: str) -> List[Dict[str, int]]:
     lines = str(merged_ocr_text or "").splitlines()
     if not lines:
@@ -2615,6 +2662,7 @@ def _finalize_category_records_from_range_map(
                     )
     sleep_behavior_ranges = find_basic_symptom_questionnaire_line_ranges(merged_ocr_text)
     sleep_history_ranges = find_basic_sleep_history_line_ranges(merged_ocr_text)
+    clinician_sleep_symptom_ranges = find_clinician_sleep_symptom_checklist_line_ranges(merged_ocr_text)
     rbd_ranges = find_rbd_supplement_line_ranges(merged_ocr_text)
 
     rbd_record = next((item for item in records if item.get("category") == MAP_CATEGORY_RBD), None)
@@ -2625,6 +2673,28 @@ def _finalize_category_records_from_range_map(
             merged_ocr_text=merged_ocr_text,
             raw_ranges=normalized_rbd_ranges,
         )
+
+    if clinician_sleep_symptom_ranges:
+        not_used_record = next((item for item in records if item.get("category") == MAP_CATEGORY_NOT_USED), None)
+        base_ranges = list(not_used_record.get("line_ranges") or []) if not_used_record is not None else []
+        combined_unused_ranges = _merge_line_ranges(base_ranges + clinician_sleep_symptom_ranges)
+        not_used_text = reconstruct_category_text_from_line_ranges(
+            merged_ocr_text=merged_ocr_text,
+            raw_ranges=combined_unused_ranges,
+        )
+        if not_used_text:
+            if not_used_record is None:
+                records.append(
+                    {
+                        "category": MAP_CATEGORY_NOT_USED,
+                        "source_images": [],
+                        "line_ranges": combined_unused_ranges,
+                        "merged_text": not_used_text,
+                    }
+                )
+            else:
+                not_used_record["line_ranges"] = combined_unused_ranges
+                not_used_record["merged_text"] = not_used_text
 
     if sleep_behavior_ranges:
         sleep_record = next((item for item in records if item.get("category") == MAP_CATEGORY_SLEEP_BEHAVIOR), None)
@@ -3895,15 +3965,6 @@ def apply_psqi_format_and_time_rules(row: Dict[str, Any]) -> None:
         for suffix in ("", "_week", "_free"):
             hh_k = f"{base}_HH{suffix}"
             mm_k = f"{base}_MM{suffix}"
-            hh_has = hh_k in row and not _is_missing_value(row.get(hh_k))
-            mm_has = mm_k in row and not _is_missing_value(row.get(mm_k))
-
-            if hh_has and not mm_has:
-                row[mm_k] = 0
-                mm_has = True
-            elif mm_has and not hh_has:
-                row[hh_k] = 0
-                hh_has = True
 
             for unit, tk in (("HH", hh_k), ("MM", mm_k)):
                 if tk not in row or _is_missing_value(row.get(tk)):
@@ -3935,13 +3996,6 @@ def apply_morning_questionnaire_time_rules(row: Dict[str, Any]) -> None:
     for base in MORNING_TIME_BASE_GROUPS:
         hh_k = f"{base}_HH"
         mm_k = f"{base}_MM"
-        hh_has = hh_k in row and not _is_missing_value(row.get(hh_k))
-        mm_has = mm_k in row and not _is_missing_value(row.get(mm_k))
-
-        if hh_has and not mm_has:
-            row[mm_k] = 0
-        elif mm_has and not hh_has:
-            row[hh_k] = 0
 
         if hh_k in row and not _is_missing_value(row.get(hh_k)):
             iv = _coerce_int(row.get(hh_k))
@@ -4966,7 +5020,7 @@ You will get two inputs:
         - Numeric ranges (i.e. 'a~b')
             - If time values measured in time units (e.g., hrs, min, sec, day), store the median.
             - If neutral frequency reported, store the median. (e.g., nap 3-4 times -> 3.5 times)
-            - If severity or negative metrics reported, store the more severe one. (e.g., waking frequency 3 times > 1 time)
+            - If severity or negative metrics reported, store the more severe one. (e.g., SQ_Wakefreq 1~3 times -> 3 times)
 4. CONTEXT
     - Context is used by later resolver agent to resolve between multiple values of the same CDM key.
     - 'filled_by': doctor for diagnosis and diagnostic report, patient when self-reported questionnaire.
@@ -4979,8 +5033,6 @@ You will get two inputs:
 - CDM Keys -> CDM Values
     - Review your key-value decision carefully to reduce mistakes.
 - Do NOT map CDM values if tagged as [not selected], [not answered], or [crossed out/struck through].
-    - Exception: If a time values in HH:MM format is tagged as [not answered] and only one of HH or MM is visible, then you can map it with the value invention that HH=0 and MM=<minutes> or HH=<hours> and MM=0 depending on the visible format.
-        e.g., PSQI times, nap times etc.
 - Do NOT map CDM values if answer is clearly not given or selected, even without such explicit tags.
 - Before finalizing, check whether any obvious directly supported candidate fields from the questionnaire title, questionnaire item list, or PSG tables were omitted.
 
