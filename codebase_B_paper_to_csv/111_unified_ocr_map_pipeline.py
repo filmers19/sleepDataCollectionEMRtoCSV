@@ -906,6 +906,285 @@ async def route_ocr_text(
         return fallback
 
 
+def _build_global_page_blocks(
+    pipeline_mod: Any,
+    image_name_text_pairs: Sequence[Tuple[str, str]],
+) -> List[Dict[str, Any]]:
+    nonempty_pairs = [
+        (str(name), str(text or "").strip())
+        for name, text in image_name_text_pairs
+        if str(text or "").strip()
+    ]
+    if not nonempty_pairs:
+        return []
+
+    blocks: List[Dict[str, Any]] = []
+    current_line = 1
+    for idx, (image_name, body) in enumerate(nonempty_pairs):
+        block_lines = [f"[SOURCE_IMAGE: {image_name}]"] + body.splitlines()
+        line_items = [
+            {"global_line": current_line + offset, "text": line}
+            for offset, line in enumerate(block_lines)
+        ]
+        blocks.append(
+            {
+                "image_name": image_name,
+                "line_items": line_items,
+                "line_start": int(line_items[0]["global_line"]),
+                "line_end": int(line_items[-1]["global_line"]),
+                "char_count": sum(len(line) + 1 for line in block_lines),
+            }
+        )
+        current_line += len(block_lines)
+        if idx != len(nonempty_pairs) - 1:
+            current_line += 1  # blank separator line inserted by merge_ocr_text_blocks()
+    return blocks
+
+
+def _build_balanced_page_bundles(
+    pipeline_mod: Any,
+    image_name_text_pairs: Sequence[Tuple[str, str]],
+) -> List[Dict[str, Any]]:
+    page_blocks = _build_global_page_blocks(pipeline_mod, image_name_text_pairs)
+    if len(page_blocks) < 2:
+        return []
+
+    total_chars = sum(int(block["char_count"]) for block in page_blocks)
+    best_split_idx = 1
+    left_chars = 0
+    best_diff: Optional[int] = None
+    for split_idx in range(1, len(page_blocks)):
+        left_chars += int(page_blocks[split_idx - 1]["char_count"])
+        right_chars = total_chars - left_chars
+        diff = abs(left_chars - right_chars)
+        if best_diff is None or diff < best_diff:
+            best_diff = diff
+            best_split_idx = split_idx
+
+    overlap_pages = 1 if len(page_blocks) >= 3 else 0
+    left_core = page_blocks[:best_split_idx]
+    right_core = page_blocks[best_split_idx:]
+    left_blocks = page_blocks[: min(len(page_blocks), best_split_idx + overlap_pages)]
+    right_blocks = page_blocks[max(0, best_split_idx - overlap_pages) :]
+
+    bundles = [
+        {
+            "bundle_id": 1,
+            "blocks": left_blocks,
+            "core_blocks": left_core,
+            "char_total": sum(int(block["char_count"]) for block in left_blocks),
+            "core_char_total": sum(int(block["char_count"]) for block in left_core),
+        },
+        {
+            "bundle_id": 2,
+            "blocks": right_blocks,
+            "core_blocks": right_core,
+            "char_total": sum(int(block["char_count"]) for block in right_blocks),
+            "core_char_total": sum(int(block["char_count"]) for block in right_core),
+        },
+    ]
+
+    out: List[Dict[str, Any]] = []
+    for bundle in bundles:
+        blocks = list(bundle["blocks"])
+        if not blocks:
+            continue
+        out.append(
+            {
+                "bundle_id": int(bundle["bundle_id"]),
+                "blocks": blocks,
+                "char_total": int(bundle["char_total"]),
+                "core_blocks": list(bundle["core_blocks"]),
+                "core_char_total": int(bundle["core_char_total"]),
+                "source_images": [str(block["image_name"]) for block in blocks],
+                "core_source_images": [str(block["image_name"]) for block in bundle["core_blocks"]],
+                "overlap_pages": overlap_pages,
+            }
+        )
+    return out
+
+
+def _build_bundle_numbered_excerpt(bundle: Dict[str, Any]) -> str:
+    numbered_lines: List[str] = []
+    for block in bundle.get("blocks") or []:
+        for item in block.get("line_items") or []:
+            numbered_lines.append(f"L{int(item['global_line']):04d} | {str(item['text'])}")
+    return "\n".join(numbered_lines).strip()
+
+
+def _build_bundle_split_user_prompt(
+    pipeline_mod: Any,
+    bundle: Dict[str, Any],
+) -> str:
+    categories = list(getattr(pipeline_mod, "PATIENT_MAP_CATEGORIES", ()))
+    output_lines = [f'  "{category}": [{{"start_line": 1, "end_line": 2}}]' for category in categories]
+    output_schema = "{\n" + ",\n".join(output_lines) + "\n}"
+    numbered_excerpt = _build_bundle_numbered_excerpt(bundle)
+    bundle_id = int(bundle.get("bundle_id") or 0)
+    category_count = len(categories)
+    source_images = "\n".join(f"  - {name}" for name in bundle.get("source_images") or [])
+    overlap_pages = int(bundle.get("overlap_pages") or 0)
+    return f"""MERGED PATIENT OCR TEXT EXCERPT
+This excerpt contains one contiguous page slice from a patient, with optional page overlap for context.
+The numbered lines below use the ORIGINAL global merged OCR line numbers.
+Small numbering gaps may appear only because the merged OCR inserts blank separator lines between pages.
+Use only the shown line numbers when selecting ranges.
+
+\"\"\"{numbered_excerpt}\"\"\"
+
+INPUTS
+- Excerpted merged patient OCR text above
+- Bundle id: {bundle_id}
+- Context overlap pages on each side: {overlap_pages}
+- Included source images:
+{source_images}
+
+ROLE
+- You are a patient-level OCR text categorization and splitting agent for a sleep-clinic pipeline.
+
+TASK
+- Split the OCR excerpt into {category_count} map-category line-range selections.
+- The unit of assignment is relevant OCR text span, represented as line ranges in the numbered OCR excerpt above.
+- Each relevant OCR text span should belong to exactly one best-fit category.
+
+HELPFUL CONTEXTS
+- Useful title / pattern hints from previous logic:
+{pipeline_mod.build_split_pattern_hint_text()}
+- A single page may contain multiple categories.
+- A single category may span multiple pages.
+- Categories may repeat across non-adjacent pages and should be merged into one final text block per category.
+
+GUIDELINES / RULES
+- Do not output copied OCR text directly. Output only line ranges.
+- Do not paraphrase, summarize, normalize, translate, correct, or rewrite OCR text.
+- Select the exact line ranges from the numbered OCR excerpt that belong to each category.
+- Use one or more line ranges when a category appears in multiple separated parts of the excerpt.
+- Do not include line ranges that contain only `[SOURCE_IMAGE: ...]` marker lines.
+- You may select only the relevant part of a page; you do not need to select the entire page if only part of it belongs to the category.
+- Prefer exact questionnaire/report titles, item wording, and unmistakable page content.
+- Do not leave recognized question lines unassigned within the shown excerpt.
+- Before finalizing, check whether any visible question/title lines in the shown excerpt remain uncategorized.
+- Use `basic` for identity, demographics, anthropometrics, PSG identifiers, occupation, and shift-work text.
+- Use `psg` for PSG reports and PSG signal/report pages.
+- Use `cpap` for CPAP reports and CPAP pressure-step titration sections.
+- Use `mq` for the morning questionnaire (`아침 질문 사항`).
+- Use `phx_habit` for lifestyle habits, medical-history checklist, and family-history questionnaire text.
+- Use `sleep_behavior` for general sleep-history, wake frequency, nap, sleep sufficiency, and narcolepsy-style symptom questionnaire text.
+- If there is no relevant text for a category in the shown excerpt, return an empty list for that category.
+
+CAUTIONS
+- Do not assign by whole-page if only part of the page belongs to the category.
+- Do not duplicate the same OCR text span into multiple categories.
+- Do not invent categories outside the allowed set.
+- Do not emit copied text, explanations, source-image names, or any metadata beyond the required line ranges.
+- The line numbers are global patient line numbers, not local bundle line numbers. Preserve them exactly.
+- Do not invent ranges for line numbers that are not shown in the excerpt.
+
+OUTPUT FORMAT
+- Return ONE flat JSON object only.
+- Do not wrap the JSON inside another key.
+- Use exactly these {category_count} keys:
+{output_schema}
+"""
+
+
+def _extract_category_range_map(
+    pipeline_mod: Any,
+    raw_payload: Dict[str, Any],
+) -> Dict[str, List[Dict[str, int]]]:
+    categories = list(getattr(pipeline_mod, "PATIENT_MAP_CATEGORIES", ()))
+    raw_map = raw_payload.get("category_texts", raw_payload)
+    if not isinstance(raw_map, dict):
+        return {category: [] for category in categories}
+    return {
+        category: pipeline_mod.normalize_line_ranges(raw_map.get(category, []))
+        for category in categories
+    }
+
+
+def _merge_category_range_maps(
+    pipeline_mod: Any,
+    range_maps: Sequence[Dict[str, List[Dict[str, int]]]],
+) -> Dict[str, List[Dict[str, int]]]:
+    categories = list(getattr(pipeline_mod, "PATIENT_MAP_CATEGORIES", ()))
+    merged: Dict[str, List[Dict[str, int]]] = {category: [] for category in categories}
+    for range_map in range_maps:
+        if not isinstance(range_map, dict):
+            continue
+        for category in categories:
+            merged[category].extend(pipeline_mod.normalize_line_ranges(range_map.get(category, [])))
+    return {
+        category: pipeline_mod._merge_line_ranges(ranges)
+        for category, ranges in merged.items()
+    }
+
+
+async def _run_parallel_bundle_split(
+    llm: TextAgent,
+    pipeline_mod: Any,
+    image_name_text_pairs: Sequence[Tuple[str, str]],
+    max_attempts: int,
+    debug_output_dir: Optional[Path] = None,
+) -> Dict[str, List[Dict[str, int]]]:
+    bundles = _build_balanced_page_bundles(pipeline_mod, image_name_text_pairs)
+    if len(bundles) < 2:
+        raise RuntimeError("parallel bundle split requires at least two non-empty page bundles")
+
+    if debug_output_dir is not None:
+        (debug_output_dir / "category_split_bundles.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "bundle_id": int(bundle["bundle_id"]),
+                        "char_total": int(bundle["char_total"]),
+                        "core_char_total": int(bundle.get("core_char_total") or 0),
+                        "core_source_images": list(bundle.get("core_source_images") or []),
+                        "source_images": list(bundle.get("source_images") or []),
+                        "overlap_pages": int(bundle.get("overlap_pages") or 0),
+                        "line_ranges": [
+                            {
+                                "start_line": int(block["line_start"]),
+                                "end_line": int(block["line_end"]),
+                                "image_name": str(block["image_name"]),
+                            }
+                            for block in bundle.get("blocks") or []
+                        ],
+                    }
+                    for bundle in bundles
+                ],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    async def _run_one(bundle: Dict[str, Any]) -> Dict[str, List[Dict[str, int]]]:
+        bundle_id = int(bundle["bundle_id"])
+        raw = await text_to_json(
+            llm=llm,
+            system_prompt=pipeline_mod.CATEGORY_SPLIT_SYSTEM,
+            user_text=_build_bundle_split_user_prompt(pipeline_mod, bundle),
+            pipeline_mod=pipeline_mod,
+            schema_hint=build_category_split_schema_hint(),
+            max_attempts=max_attempts,
+            label=f"category_split_bundle_{bundle_id}",
+        )
+        if debug_output_dir is not None:
+            (debug_output_dir / f"category_split_bundle_{bundle_id}_raw.json").write_text(
+                json.dumps(raw, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            bundle_preview = pipeline_mod.preview_raw_category_split_decision(raw, image_name_text_pairs)
+            (debug_output_dir / f"category_split_bundle_{bundle_id}_preview.json").write_text(
+                json.dumps(bundle_preview, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        return _extract_category_range_map(pipeline_mod, raw)
+
+    range_maps = await asyncio.gather(*[_run_one(bundle) for bundle in bundles])
+    return _merge_category_range_maps(pipeline_mod, range_maps)
+
+
 async def split_patient_ocr_categories(
     llm: TextAgent,
     pipeline_mod: Any,
@@ -915,18 +1194,44 @@ async def split_patient_ocr_categories(
 ) -> List[Dict[str, Any]]:
     merged_ocr_text = pipeline_mod.merge_ocr_text_blocks(list(image_name_text_pairs))
     try:
-        raw = await text_to_json(
-            llm=llm,
-            system_prompt=pipeline_mod.CATEGORY_SPLIT_SYSTEM,
-            user_text=pipeline_mod.build_category_split_user_prompt(
-                merged_ocr_text=merged_ocr_text,
-                source_images=[name for name, _ in image_name_text_pairs],
-            ),
-            pipeline_mod=pipeline_mod,
-            schema_hint=build_category_split_schema_hint(),
-            max_attempts=max_attempts,
-            label="category_split",
-        )
+        page_blocks = _build_global_page_blocks(pipeline_mod, image_name_text_pairs)
+        use_parallel_bundle_split = len(page_blocks) > 7 and len(merged_ocr_text) >= 8000
+        if use_parallel_bundle_split:
+            try:
+                raw = await _run_parallel_bundle_split(
+                    llm=llm,
+                    pipeline_mod=pipeline_mod,
+                    image_name_text_pairs=image_name_text_pairs,
+                    max_attempts=max_attempts,
+                    debug_output_dir=debug_output_dir,
+                )
+            except Exception as exc:
+                logger.warning("Parallel bundle split failed, retrying with single-pass split: %s", exc)
+                raw = await text_to_json(
+                    llm=llm,
+                    system_prompt=pipeline_mod.CATEGORY_SPLIT_SYSTEM,
+                    user_text=pipeline_mod.build_category_split_user_prompt(
+                        merged_ocr_text=merged_ocr_text,
+                        source_images=[name for name, _ in image_name_text_pairs],
+                    ),
+                    pipeline_mod=pipeline_mod,
+                    schema_hint=build_category_split_schema_hint(),
+                    max_attempts=max_attempts,
+                    label="category_split",
+                )
+        else:
+            raw = await text_to_json(
+                llm=llm,
+                system_prompt=pipeline_mod.CATEGORY_SPLIT_SYSTEM,
+                user_text=pipeline_mod.build_category_split_user_prompt(
+                    merged_ocr_text=merged_ocr_text,
+                    source_images=[name for name, _ in image_name_text_pairs],
+                ),
+                pipeline_mod=pipeline_mod,
+                schema_hint=build_category_split_schema_hint(),
+                max_attempts=max_attempts,
+                label="category_split",
+            )
         if debug_output_dir is not None:
             (debug_output_dir / "category_split_raw.json").write_text(
                 json.dumps(raw, ensure_ascii=False, indent=2),

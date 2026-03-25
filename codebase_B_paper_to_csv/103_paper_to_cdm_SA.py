@@ -2876,7 +2876,9 @@ def build_category_specific_map_rules(map_category: str, ocr_text: str) -> str:
                 "- Do not output multiple values for the same `basic` key. Choose one final best value after applying the majority-vote rule.",
                 "- Normalize occupation to Korean wording when possible. If CDM options exist for the occupation, map to the correct option code.",
                 "- If OCR answer indicates job-seeking/leave or jobless (e.g., 취준, 취업준비, 휴직, 무직, X), omit Occupation.",
-                "- Shiftwork should come only from the explicit `교대 근무` question or equivalent direct wording.",
+                "- Shiftwork must come only from the dedicated shift-work question/field such as `교대 근무` or a clearly equivalent direct header field.",
+                "- If the shift-work field is blank, unanswered, missing, or unreadable, leave `Shiftwork` blank.",
+                "- Do not output `0` for `Shiftwork` just because there is no relevant selected mark, checked mark, or answered content.",
                 "- If the patient name is written in Korean, output the Korean name in Korean. If written in English, output the English name in English. Do not romanize Korean names, and do not translate English names into Korean.",
             ]
         )
@@ -2912,6 +2914,9 @@ def build_category_specific_map_rules(map_category: str, ocr_text: str) -> str:
             [
                 "- This is the `psg` category. Focus on common PSG metrics and PSG-specific report values. Do not emit CPAP pressure-step titration keys from this category.",
                 "- Extract PSG report values, respiratory indices, diagnoses, and summary metrics only when directly supported.",
+                "- Before finalizing the PSG mapping, do one explicit tail-section scan for the common PSG fields that often appear near the end of the report: `PLM_idx`, `LM_idx`, `Arousal_PLM_no`, `Arousal_PLM_idx_re`, `Arousal_LM_no`, and `Arousal_LM_idx`.",
+                "- For those common PSG tail fields, check the leg movement / PLM / LM / arousal portion of the report even if the main sleep-architecture and respiratory metrics have already been found.",
+                "- For `Arousal_PLM_no`, `Arousal_PLM_idx_re`, `Arousal_LM_no`, and `Arousal_LM_idx`, output `0` only when the OCR text explicitly shows a zero or a clear zero-equivalent entry for that exact field. If the field is not explicitly present, leave it blank rather than inventing `0`.",
                 "- If the patient name is written in Korean, output the Korean name in Korean. If written in English, output the English name in English. Do not romanize Korean names, and do not translate English names into Korean.",
                 "- Diagnosis_etc:",
                 "  1st Position: `II. Diagnosis` section after `I. Result`.",
@@ -2925,6 +2930,9 @@ def build_category_specific_map_rules(map_category: str, ocr_text: str) -> str:
                 "- This is the `cpap` category. Focus on common PSG metrics plus CPAP titration pressure-step fields and CPAP-specific report values.",
                 "- The candidate block for this category may already be narrowed to the pressure steps detected from the OCR text. Treat the listed Pressure_XX and PrXX_* keys as the allowed CPAP titration steps for this report.",
                 "- CPAP pressure-step keys such as Pressure_XX and PrXX_* are eligible only when directly supported by the OCR text. Do not invent later pressure steps that are not listed in the candidate block.",
+                "- Before finalizing the CPAP mapping, do one explicit tail-section scan for the common PSG fields that often appear near the end of the report: `PLM_idx`, `LM_idx`, `Arousal_PLM_no`, `Arousal_PLM_idx_re`, `Arousal_LM_no`, and `Arousal_LM_idx`.",
+                "- In CPAP reports, those common PSG tail fields may appear after the pressure-step table, leg movement summary, or report conclusion. Check those local sections before leaving the fields blank.",
+                "- For `Arousal_PLM_no`, `Arousal_PLM_idx_re`, `Arousal_LM_no`, and `Arousal_LM_idx`, output `0` only when the OCR text explicitly shows a zero or a clear zero-equivalent entry for that exact field. If the field is not explicitly present, leave it blank rather than inventing `0`.",
                 "- If the patient name is written in Korean, output the Korean name in Korean. If written in English, output the English name in English. Do not romanize Korean names, and do not translate English names into Korean.",
                 "- Diagnosis_etc:",
                 "  1st Position: `II. Diagnosis` section after `I. Result`.",
