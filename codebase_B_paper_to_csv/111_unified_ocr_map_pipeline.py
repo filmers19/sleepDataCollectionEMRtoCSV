@@ -911,6 +911,7 @@ async def split_patient_ocr_categories(
     pipeline_mod: Any,
     image_name_text_pairs: Sequence[Tuple[str, str]],
     max_attempts: int,
+    debug_output_dir: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
     merged_ocr_text = pipeline_mod.merge_ocr_text_blocks(list(image_name_text_pairs))
     try:
@@ -926,12 +927,32 @@ async def split_patient_ocr_categories(
             max_attempts=max_attempts,
             label="category_split",
         )
+        if debug_output_dir is not None:
+            (debug_output_dir / "category_split_raw.json").write_text(
+                json.dumps(raw, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            raw_preview = pipeline_mod.preview_raw_category_split_decision(raw, image_name_text_pairs)
+            (debug_output_dir / "category_split_initial_pre_repair.json").write_text(
+                json.dumps(raw_preview, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
         records = pipeline_mod.normalize_category_split_decision(raw, image_name_text_pairs)
+        if debug_output_dir is not None:
+            (debug_output_dir / "category_split_initial.json").write_text(
+                json.dumps(records, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
         assigned_ranges = pipeline_mod._extract_assigned_ranges_from_records(records)
         leftover_ranges = pipeline_mod.extract_uncategorized_informative_ranges(
             merged_ocr_text=merged_ocr_text,
             assigned_ranges=assigned_ranges,
         )
+        if debug_output_dir is not None:
+            (debug_output_dir / "category_split_leftovers_initial.json").write_text(
+                json.dumps(leftover_ranges, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
         if leftover_ranges:
             try:
                 rescue_raw = await text_to_json(
@@ -946,11 +967,21 @@ async def split_patient_ocr_categories(
                     max_attempts=max_attempts,
                     label="category_split_rescue",
                 )
+                if debug_output_dir is not None:
+                    (debug_output_dir / "category_split_rescue_raw.json").write_text(
+                        json.dumps(rescue_raw, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
                 records = pipeline_mod.merge_rescued_category_ranges(
                     merged_ocr_text=merged_ocr_text,
                     records=records,
                     rescue_payload=rescue_raw,
                 )
+                if debug_output_dir is not None:
+                    (debug_output_dir / "category_split_after_rescue.json").write_text(
+                        json.dumps(records, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
             except Exception as exc:
                 logger.warning("Category split leftover rescue agent failed, falling back to deterministic assignment: %s", exc)
 
@@ -959,15 +990,30 @@ async def split_patient_ocr_categories(
             merged_ocr_text=merged_ocr_text,
             assigned_ranges=final_assigned_ranges,
         )
+        if debug_output_dir is not None:
+            (debug_output_dir / "category_split_leftovers_final.json").write_text(
+                json.dumps(final_leftover_ranges, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
         if final_leftover_ranges:
             fallback_payload = pipeline_mod.assign_leftover_ranges_to_best_categories(
                 merged_ocr_text=merged_ocr_text,
                 leftover_ranges=final_leftover_ranges,
             )
+            if debug_output_dir is not None:
+                (debug_output_dir / "category_split_fallback_payload.json").write_text(
+                    json.dumps(fallback_payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
             records = pipeline_mod.merge_rescued_category_ranges(
                 merged_ocr_text=merged_ocr_text,
                 records=records,
                 rescue_payload=fallback_payload,
+            )
+        if debug_output_dir is not None:
+            (debug_output_dir / "category_split_final.json").write_text(
+                json.dumps(records, ensure_ascii=False, indent=2),
+                encoding="utf-8",
             )
         return records
     except Exception as exc:
@@ -1115,7 +1161,15 @@ async def map_ocr_text_for_category(
     map_category: str,
     json_retry_attempts: int,
     enable_recall: bool,
-) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, str]], Dict[str, str], Dict[str, Dict[str, Any]]]:
+) -> Tuple[
+    Dict[str, Any],
+    Dict[str, Any],
+    Dict[str, Dict[str, str]],
+    Dict[str, str],
+    Dict[str, Dict[str, Any]],
+    List[Any],
+    Dict[str, Any],
+]:
     stage_raw: Dict[str, Any] = {}
     stage_valid: Dict[str, Any] = {}
     stage_contexts: Dict[str, Dict[str, str]] = {}
@@ -1123,7 +1177,10 @@ async def map_ocr_text_for_category(
     stage_rejected: Dict[str, Dict[str, Any]] = {}
     normalized_category = pipeline_mod.normalize_map_category_name(map_category)
     prompt_ocr_text = pipeline_mod.normalize_category_map_input_text(normalized_category, ocr_text)
-    candidates_block = retriever.prompt_block_for_category(normalized_category, include_basic=True)
+    candidate_spec = pipeline_mod.build_category_candidate_spec(retriever, normalized_category, ocr_text)
+    candidates_block = str(candidate_spec.get("candidates_block") or "")
+    owned_rows = list(candidate_spec.get("rows") or [])
+    candidate_meta = dict(candidate_spec.get("meta") or {})
 
     raw = await map_category_to_json(
         llm=llm,
@@ -1177,7 +1234,7 @@ async def map_ocr_text_for_category(
         stage_cdm_contexts=stage_cdm_contexts,
         stage_rejected=stage_rejected,
     )
-    return stage_raw, stage_valid, stage_contexts, stage_cdm_contexts, stage_rejected
+    return stage_raw, stage_valid, stage_contexts, stage_cdm_contexts, stage_rejected, owned_rows, candidate_meta
 
 
 async def map_ocr_text_single_agent(
@@ -2382,6 +2439,7 @@ async def run(args: argparse.Namespace) -> None:
         pipeline_mod=pipeline_mod,
         image_name_text_pairs=image_name_text_pairs,
         max_attempts=max(1, min(2, int(args.map_json_retry_attempts))),
+        debug_output_dir=output_dir,
     )
     (output_dir / "category_split_result.json").write_text(
         json.dumps(category_records, ensure_ascii=False, indent=2),
@@ -2406,7 +2464,15 @@ async def run(args: argparse.Namespace) -> None:
             t0 = time.perf_counter()
             try:
                 backend = map_agent_backends[(idx - 1) % max(1, len(map_agent_backends))]
-                raw_obj, valid_obj, valid_contexts, valid_cdm_contexts, rejected_fields = await map_ocr_text_for_category(
+                (
+                    raw_obj,
+                    valid_obj,
+                    valid_contexts,
+                    valid_cdm_contexts,
+                    rejected_fields,
+                    owned_rows,
+                    candidate_meta,
+                ) = await map_ocr_text_for_category(
                     llm=backend,
                     pipeline_mod=pipeline_mod,
                     retriever=retriever,
@@ -2426,7 +2492,6 @@ async def run(args: argparse.Namespace) -> None:
                         rejected_fields=rejected_fields,
                     )
                 )
-                owned_rows = retriever.category_rows(map_category, include_basic=True)
                 owned_keys_payload = {
                     "category": map_category,
                     "owned_key_count": len(owned_rows),
@@ -2482,6 +2547,7 @@ async def run(args: argparse.Namespace) -> None:
                 ok = False
                 valid_count = 0
                 error = f"{type(exc).__name__}: {exc}"
+                candidate_meta = {}
                 page_errors.append({"image": category_name, "error_type": type(exc).__name__, "error": str(exc)})
 
         meta = {
@@ -2492,6 +2558,8 @@ async def run(args: argparse.Namespace) -> None:
             "valid_keys": valid_count,
             "error": error,
         }
+        if candidate_meta:
+            meta.update(candidate_meta)
         (map_page_dir / f"{category_name}.meta.json").write_text(
             json.dumps(meta, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -2518,6 +2586,7 @@ async def run(args: argparse.Namespace) -> None:
         page_results=page_results,
         duplicates=duplicates,
         page_errors=page_errors,
+        retriever=retriever,
         output_columns=output_columns,
         save_intermediate=args.save_intermediate,
         out_dir=output_dir,

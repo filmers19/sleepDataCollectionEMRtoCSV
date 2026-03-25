@@ -60,6 +60,36 @@ CORE_ALWAYS_KEYS = [
     "Shiftwork",
 ]
 
+BASIC_RESOLUTION_KEYS: Tuple[str, ...] = (
+    "Hospital_ID",
+    "Name",
+    "PSG_Date",
+    "PSG_No",
+    "SEX",
+    "AGE",
+    "Height_cm",
+    "Weight_kg",
+    "BMI",
+    "Neckcir_cm",
+    "Occupation",
+    "Shiftwork",
+)
+
+BASIC_REPORT_HEADER_KEYS = {
+    "Hospital_ID",
+    "Name",
+    "PSG_Date",
+    "PSG_No",
+    "SEX",
+    "AGE",
+    "Height_cm",
+    "Weight_kg",
+    "BMI",
+    "Neckcir_cm",
+}
+
+BASIC_PROFILE_KEYS = {"Occupation", "Shiftwork"}
+
 TRIGGER_PREFIX_RULES: List[Tuple[re.Pattern, Tuple[str, ...]]] = [
     (re.compile(r"\bpsqi\b|pittsburgh sleep quality index", re.I), ("PSQI",)),
     (re.compile(r"\bess\b|epworth sleepiness", re.I), ("ESS",)),
@@ -197,7 +227,10 @@ DEFAULT_MAP_ROUTE = MAP_ROUTE_NIGHT_QUESTIONNAIRE
 MAP_CATEGORY_BASIC = "basic"
 MAP_CATEGORY_PHX_HABIT = "phx_habit"
 MAP_CATEGORY_SLEEP_BEHAVIOR = "sleep_behavior"
+MAP_CATEGORY_MQ = "mq"
+MAP_CATEGORY_COMMON_PSG = "common_psg"
 MAP_CATEGORY_PSG = "psg"
+MAP_CATEGORY_CPAP = "cpap"
 MAP_CATEGORY_PSQI = "psqi"
 MAP_CATEGORY_SSS = "sss"
 MAP_CATEGORY_ESS = "ess"
@@ -211,9 +244,12 @@ MAP_CATEGORY_BDI = "bdi"
 MAP_CATEGORY_QOL = "qol"
 
 PATIENT_MAP_CATEGORIES: Tuple[str, ...] = (
+    MAP_CATEGORY_BASIC,
     MAP_CATEGORY_PHX_HABIT,
     MAP_CATEGORY_SLEEP_BEHAVIOR,
+    MAP_CATEGORY_MQ,
     MAP_CATEGORY_PSG,
+    MAP_CATEGORY_CPAP,
     MAP_CATEGORY_PSQI,
     MAP_CATEGORY_SSS,
     MAP_CATEGORY_ESS,
@@ -228,9 +264,12 @@ PATIENT_MAP_CATEGORIES: Tuple[str, ...] = (
 )
 
 MAP_CATEGORY_DESCRIPTIONS: Dict[str, str] = {
-    MAP_CATEGORY_PHX_HABIT: "Patient questionnaire text for medical history checklist, lifestyle habits, family history, occupation, and shift-work questions.",
+    MAP_CATEGORY_BASIC: "Identity, demographics, anthropometrics, PSG identifiers, occupation, and shift-work text.",
+    MAP_CATEGORY_PHX_HABIT: "Patient questionnaire text for medical history checklist, lifestyle habits, and family history questions.",
     MAP_CATEGORY_SLEEP_BEHAVIOR: "Patient questionnaire text for general sleep-history, wake frequency, naps, sleep sufficiency, and narcolepsy-style symptom questions.",
-    MAP_CATEGORY_PSG: "Polysomnography / CPAP report pages and PSG signal/summary pages.",
+    MAP_CATEGORY_MQ: "Morning-after PSG questionnaire pages asking about last night's sleep, awakenings, dreams, alertness, and waking experience.",
+    MAP_CATEGORY_PSG: "PSG report pages, PSG signal/summary pages, and common PSG metrics that are not CPAP titration-specific.",
+    MAP_CATEGORY_CPAP: "CPAP titration report pages and CPAP pressure-step titration sections.",
     MAP_CATEGORY_PSQI: "Pittsburgh Sleep Quality Index pages.",
     MAP_CATEGORY_SSS: "Stanford Sleepiness Scale pages.",
     MAP_CATEGORY_ESS: "Epworth Sleepiness Scale pages.",
@@ -413,9 +452,18 @@ def normalize_map_category_name(category_raw: Any) -> str:
         "sleep behavior": MAP_CATEGORY_SLEEP_BEHAVIOR,
         "sleep_behaviour": MAP_CATEGORY_SLEEP_BEHAVIOR,
         "sleep_history": MAP_CATEGORY_SLEEP_BEHAVIOR,
+        "mq": MAP_CATEGORY_MQ,
+        "morning_questionnaire": MAP_CATEGORY_MQ,
+        "morning questionnaire": MAP_CATEGORY_MQ,
+        "psg_morning": MAP_CATEGORY_MQ,
+        "common_psg": MAP_CATEGORY_COMMON_PSG,
+        "common psg": MAP_CATEGORY_COMMON_PSG,
         "psg": MAP_CATEGORY_PSG,
         "psg_report": MAP_CATEGORY_PSG,
         "polysomnography": MAP_CATEGORY_PSG,
+        "cpap": MAP_CATEGORY_CPAP,
+        "cpap_report": MAP_CATEGORY_CPAP,
+        "cpap_psg": MAP_CATEGORY_CPAP,
         "psqi": MAP_CATEGORY_PSQI,
         "pittsburgh_sleep_quality_index": MAP_CATEGORY_PSQI,
         "sss": MAP_CATEGORY_SSS,
@@ -448,7 +496,7 @@ def normalize_source_label(source_raw: Any) -> str:
     if not raw:
         return ""
     lowered = raw.lower()
-    if normalize_map_category_name(lowered) in set(PATIENT_MAP_CATEGORIES) | {MAP_CATEGORY_BASIC}:
+    if normalize_map_category_name(lowered) in set(PATIENT_MAP_CATEGORIES) | {MAP_CATEGORY_BASIC, MAP_CATEGORY_COMMON_PSG}:
         return normalize_map_category_name(lowered)
     if lowered.startswith("category__"):
         return raw
@@ -834,6 +882,137 @@ def normalize_category_map_input_text(map_category: str, ocr_text: str) -> str:
     return text
 
 
+CPAP_REPORT_ANCHOR_PATTERNS: Tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?i)\bfull\s+night\s+cpap\s+polysomnography\b"),
+    re.compile(r"(?i)\bnasal\s+cpap\s+titration\b"),
+    re.compile(r"(?i)\bcpap\s+titration\b"),
+    re.compile(r"(?i)\boptimal\s+cpap\s+pressure\b"),
+    re.compile(r"(?i)\bnasal\s+cpap\s+at\s+\d{1,2}\s*cm"),
+)
+CPAP_RANGE_LINE_PATTERNS: Tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?i)\bpressure\s*(\d{1,2})\s*[~\-–]\s*(\d{1,2})\s*m?\s*cm\s*/?\s*h2o\b"),
+    re.compile(r"(?i)\bpressure\s*(\d{1,2})\s*[~\-–]\s*(\d{1,2})\s*m?h2o\b"),
+)
+CPAP_BULLET_STEP_PATTERN = re.compile(r"(?i)(?:^|\*)\s*pressure\s*(\d{1,2})\s*cm\s*/?\s*h2o\b")
+CPAP_OPTIMAL_STEP_PATTERN = re.compile(r"(?i)\boptimal\s+cpap\s+pressure\s*:?\s*(\d{1,2})\s*cm")
+CPAP_RECOMMENDED_STEP_PATTERN = re.compile(r"(?i)\bnasal\s+cpap\s+at\s*(\d{1,2})\s*cm")
+CPAP_ROW_WITH_SLASH_PATTERN = re.compile(r"^\s*\|?\s*(\d{1,2})\s*/\s*([0-9]+(?:\.[0-9]+)?)\b")
+CPAP_ROW_WITH_SPACES_PATTERN = re.compile(r"^\s*(\d{1,2})\s+([0-9]+(?:\.[0-9]+)?)\s*\|")
+CPAP_ROW_WITH_SPLIT_COLUMNS_PATTERN = re.compile(r"^\s*\|?\s*(\d{1,2})\s*\|\s*([0-9]+(?:\.[0-9]+)?)\s*\|")
+
+
+def _coerce_cpap_step(step_text: Any) -> Optional[int]:
+    try:
+        step = int(str(step_text).strip())
+    except Exception:
+        return None
+    if CPAP_PRESSURE_STEP_START <= step <= CPAP_PRESSURE_STEP_END:
+        return step
+    return None
+
+
+def _collect_cpap_dynamic_candidate_metadata(ocr_text: str) -> Dict[str, Any]:
+    text = str(ocr_text or "")
+    lines = text.splitlines()
+
+    anchors: List[Dict[str, Any]] = []
+    range_lines: List[Dict[str, Any]] = []
+    bullet_lines: List[Dict[str, Any]] = []
+    row_lines: List[Dict[str, Any]] = []
+    optimal_lines: List[Dict[str, Any]] = []
+    recommended_lines: List[Dict[str, Any]] = []
+
+    range_steps: set[int] = set()
+    bullet_steps: set[int] = set()
+    row_steps: set[int] = set()
+    optimal_steps: set[int] = set()
+    recommended_steps: set[int] = set()
+
+    for idx, raw_line in enumerate(lines, start=1):
+        line = str(raw_line or "").strip()
+        if not line:
+            continue
+
+        for pat in CPAP_REPORT_ANCHOR_PATTERNS:
+            if pat.search(line):
+                anchors.append({"line_no": idx, "line": line, "pattern": pat.pattern})
+                break
+
+        for pat in CPAP_RANGE_LINE_PATTERNS:
+            for match in pat.finditer(line):
+                start = _coerce_cpap_step(match.group(1))
+                end = _coerce_cpap_step(match.group(2))
+                if start is None or end is None:
+                    continue
+                lo, hi = sorted((start, end))
+                range_lines.append({"line_no": idx, "line": line, "start": lo, "end": hi})
+                for step in range(lo, hi + 1):
+                    range_steps.add(step)
+
+        for match in CPAP_BULLET_STEP_PATTERN.finditer(line):
+            step = _coerce_cpap_step(match.group(1))
+            if step is None:
+                continue
+            bullet_lines.append({"line_no": idx, "line": line, "step": step})
+            bullet_steps.add(step)
+
+        row_match = (
+            CPAP_ROW_WITH_SLASH_PATTERN.search(line)
+            or CPAP_ROW_WITH_SPACES_PATTERN.search(line)
+            or CPAP_ROW_WITH_SPLIT_COLUMNS_PATTERN.search(line)
+        )
+        if row_match:
+            step = _coerce_cpap_step(row_match.group(1))
+            if step is not None:
+                try:
+                    time_min = float(str(row_match.group(2)).strip())
+                except Exception:
+                    time_min = 0.0
+                if time_min > 0:
+                    row_lines.append({"line_no": idx, "line": line, "step": step, "time_min": time_min})
+                    row_steps.add(step)
+
+        for match in CPAP_OPTIMAL_STEP_PATTERN.finditer(line):
+            step = _coerce_cpap_step(match.group(1))
+            if step is None:
+                continue
+            optimal_lines.append({"line_no": idx, "line": line, "step": step})
+            optimal_steps.add(step)
+
+        for match in CPAP_RECOMMENDED_STEP_PATTERN.finditer(line):
+            step = _coerce_cpap_step(match.group(1))
+            if step is None:
+                continue
+            recommended_lines.append({"line_no": idx, "line": line, "step": step})
+            recommended_steps.add(step)
+
+    explicit_steps = sorted(row_steps | bullet_steps)
+    allowed_steps = sorted(range_steps | row_steps | bullet_steps)
+    detected_steps = sorted(range_steps | row_steps | bullet_steps | optimal_steps | recommended_steps)
+    is_cpap_report = bool(anchors and (allowed_steps or optimal_steps or recommended_steps))
+
+    return {
+        "candidate_mode": "dynamic_cpap_steps",
+        "cpap_report_detected": bool(is_cpap_report),
+        "allowed_steps": allowed_steps,
+        "detected_steps": detected_steps,
+        "evidence": {
+            "anchors": anchors,
+            "range_lines": range_lines,
+            "bullet_lines": bullet_lines,
+            "row_lines": row_lines,
+            "optimal_lines": optimal_lines,
+            "recommended_lines": recommended_lines,
+        },
+        "notes": {
+            "explicit_steps": explicit_steps,
+            "range_steps": sorted(range_steps),
+            "optimal_steps": sorted(optimal_steps),
+            "recommended_steps": sorted(recommended_steps),
+        },
+    }
+
+
 def build_document_label_catalog_text() -> str:
     lines: List[str] = []
     for label, spec in DOCUMENT_LABEL_SPECS.items():
@@ -1076,6 +1255,20 @@ OFFICIAL_GENERIC_BREAK_PATTERNS: Tuple[str, ...] = (
     "SLEEP - WAKE QUESTIONNAIRE",
     "Living habit",
 )
+OFFICIAL_CATEGORY_FAMILY_MAP: Dict[str, Tuple[str, ...]] = {
+    MAP_CATEGORY_MQ: ("MQ",),
+    MAP_CATEGORY_SSS: ("SSS",),
+    MAP_CATEGORY_ESS: ("ESS",),
+    MAP_CATEGORY_FSS: ("FSS",),
+    MAP_CATEGORY_BERLIN: ("BQ",),
+    MAP_CATEGORY_ISI: ("ISI",),
+    MAP_CATEGORY_RLS: ("RLS", "IRLS"),
+    MAP_CATEGORY_RBD: ("RBD",),
+    MAP_CATEGORY_PHQ: ("PHQ",),
+    MAP_CATEGORY_PSQI: ("PSQI",),
+    MAP_CATEGORY_BDI: ("BDI",),
+    MAP_CATEGORY_QOL: ("QOL",),
+}
 PSQI_PAGE2_CUE_PATTERNS: Tuple[str, ...] = (
     r"During the past month,\s*how would you rate your sleep quality overall\?",
     r"rate your sleep quality overall",
@@ -1083,10 +1276,39 @@ PSQI_PAGE2_CUE_PATTERNS: Tuple[str, ...] = (
 )
 
 MAP_CATEGORY_RULE_PATTERNS: Dict[str, Tuple[str, ...]] = {
-    MAP_CATEGORY_PSG: (
+    MAP_CATEGORY_BASIC: (
+        r"\b등록번호\b",
+        r"\b병록 번호\b",
+        r"\bhospi\.\s*no\b",
+        r"\bid:\b",
+        r"\b성명\b",
+        r"\bname\b",
+        r"\b성별\b",
+        r"\bsex\b",
+        r"\b연령\b",
+        r"\bage\b",
+        r"\b검사일\b",
+        r"\bdate:\b",
+        r"\bstudy date\b",
+        r"\bpsg#\b",
+        r"\btest no\.\b",
+        r"\bsleep study number\b",
+        r"\bheight\b",
+        r"\bweight\b",
+        r"\bbody mass index\b",
+        r"\bneck circumference\b",
+        r"\b직업:\b",
+        r"교대\s*근무",
+        r"근무시간",
+    ),
+    MAP_CATEGORY_MQ: (
         r"아침 질문 사항",
+        r"어젯밤 불을 끈 후",
+        r"어젯밤에 얼마나 오랫동안 잠을 잤다고 생각",
+        r"오늘 아침 어떻게 잠에서 깨어났",
+    ),
+    MAP_CATEGORY_PSG: (
         r"polysomnography report",
-        r"cpap polysomnography report",
         r"night polysomnography report",
         r"respiratory disturbance index",
         r"sleep efficiency",
@@ -1097,6 +1319,16 @@ MAP_CATEGORY_RULE_PATTERNS: Dict[str, Tuple[str, ...]] = {
         r"수면다원검사",
         r"수면 효율",
         r"호흡장애지수",
+    ),
+    MAP_CATEGORY_CPAP: (
+        r"cpap polysomnography report",
+        r"full night cpap polysomnography report",
+        r"\bcpap\b",
+        r"\bpap\b",
+        r"pressure\s+\d+\s*cmh2o",
+        r"optimal cpap pressure",
+        r"mask leak",
+        r"mouth breathing",
     ),
     MAP_CATEGORY_PSQI: (
         r"pittsburgh sleep quality index",
@@ -1182,20 +1414,23 @@ MAP_CATEGORY_RULE_PATTERNS: Dict[str, Tuple[str, ...]] = {
 }
 
 MAP_CATEGORY_PROMPT_GUIDANCE: Dict[str, str] = {
-    MAP_CATEGORY_PHX_HABIT: "Focus on occupation, shiftwork, lifestyle habits, medical history checklist items, family history, and other non-official PHx/habit questionnaire answers.",
+    MAP_CATEGORY_BASIC: "Focus on identity, demographics, anthropometrics, PSG identifiers, occupation, and shift-work fields only.",
+    MAP_CATEGORY_PHX_HABIT: "Focus on lifestyle habits, medical history checklist items, family history, and other non-official PHx/habit questionnaire answers.",
     MAP_CATEGORY_SLEEP_BEHAVIOR: "Focus on general sleep-behavior questions such as sleep sufficiency, wake frequency, naps, daytime sleepiness, and narcolepsy-style symptom questions.",
-    MAP_CATEGORY_PSG: "Focus on PSG/CPAP report metrics, signal/report values, respiratory indices, diagnosis/impression, and CPAP pressure-step fields when explicitly visible.",
-    MAP_CATEGORY_PSQI: "Focus only on PSQI question values and associated basic fields that are explicitly visible.",
-    MAP_CATEGORY_SSS: "Focus only on Stanford Sleepiness Scale values and shared basic fields that are explicitly visible.",
-    MAP_CATEGORY_ESS: "Focus only on Epworth Sleepiness Scale values and shared basic fields that are explicitly visible.",
-    MAP_CATEGORY_FSS: "Focus only on Fatigue Severity Scale values and shared basic fields that are explicitly visible.",
-    MAP_CATEGORY_BERLIN: "Focus only on Berlin Questionnaire values and shared basic fields that are explicitly visible.",
-    MAP_CATEGORY_ISI: "Focus only on Insomnia Severity Index values and shared basic fields that are explicitly visible.",
-    MAP_CATEGORY_RLS: "Focus only on restless-legs / PLMS questionnaire values and shared basic fields that are explicitly visible.",
-    MAP_CATEGORY_RBD: "Focus only on REM sleep behavior disorder questionnaire values and shared basic fields that are explicitly visible.",
-    MAP_CATEGORY_PHQ: "Focus only on PHQ depression questionnaire values and shared basic fields that are explicitly visible.",
-    MAP_CATEGORY_BDI: "Focus only on Beck Depression Inventory values and shared basic fields that are explicitly visible.",
-    MAP_CATEGORY_QOL: "Focus only on quality-of-life questionnaire values and shared basic fields that are explicitly visible.",
+    MAP_CATEGORY_MQ: "Focus on morning questionnaire answers from the after-PSG form only.",
+    MAP_CATEGORY_PSG: "Focus on common PSG report metrics and PSG-specific report values, respiratory indices, sleep architecture values, and diagnosis/impression when explicitly visible.",
+    MAP_CATEGORY_CPAP: "Focus on common PSG report metrics plus CPAP titration pressure-step fields and CPAP-specific report values when explicitly visible.",
+    MAP_CATEGORY_PSQI: "Focus only on PSQI question values.",
+    MAP_CATEGORY_SSS: "Focus only on Stanford Sleepiness Scale values.",
+    MAP_CATEGORY_ESS: "Focus only on Epworth Sleepiness Scale values.",
+    MAP_CATEGORY_FSS: "Focus only on Fatigue Severity Scale values.",
+    MAP_CATEGORY_BERLIN: "Focus only on Berlin Questionnaire values.",
+    MAP_CATEGORY_ISI: "Focus only on Insomnia Severity Index values.",
+    MAP_CATEGORY_RLS: "Focus only on restless-legs / PLMS questionnaire values.",
+    MAP_CATEGORY_RBD: "Focus only on REM sleep behavior disorder questionnaire values.",
+    MAP_CATEGORY_PHQ: "Focus only on PHQ depression questionnaire values.",
+    MAP_CATEGORY_BDI: "Focus only on Beck Depression Inventory values.",
+    MAP_CATEGORY_QOL: "Focus only on quality-of-life questionnaire values.",
 }
 
 CATEGORY_SPLIT_SYSTEM = """
@@ -1393,13 +1628,21 @@ def classify_page_map_categories_heuristic(ocr_text: Any) -> List[str]:
     if not raw.strip():
         return [MAP_CATEGORY_PHX_HABIT]
 
+    mq_hit = any(re.search(pattern, raw, flags=re.I) for pattern in MAP_CATEGORY_RULE_PATTERNS.get(MAP_CATEGORY_MQ, ()))
+    if mq_hit:
+        return [MAP_CATEGORY_MQ]
+
+    cpap_hit = any(re.search(pattern, raw, flags=re.I) for pattern in MAP_CATEGORY_RULE_PATTERNS.get(MAP_CATEGORY_CPAP, ()))
+    if cpap_hit:
+        return [MAP_CATEGORY_CPAP]
+
     psg_hit = any(re.search(pattern, raw, flags=re.I) for pattern in MAP_CATEGORY_RULE_PATTERNS.get(MAP_CATEGORY_PSG, ()))
     if psg_hit:
         return [MAP_CATEGORY_PSG]
 
     specific_categories: List[str] = []
     for category in PATIENT_MAP_CATEGORIES:
-        if category == MAP_CATEGORY_PSG:
+        if category in {MAP_CATEGORY_MQ, MAP_CATEGORY_PSG, MAP_CATEGORY_CPAP}:
             continue
         patterns = MAP_CATEGORY_RULE_PATTERNS.get(category, ())
         if any(re.search(pattern, raw, flags=re.I) for pattern in patterns):
@@ -1427,7 +1670,7 @@ def build_category_catalog_text() -> str:
 
 def build_split_pattern_hint_text() -> str:
     family_to_category = {
-        "MQ": MAP_CATEGORY_PSG,
+        "MQ": MAP_CATEGORY_MQ,
         "SSS": MAP_CATEGORY_SSS,
         "ESS": MAP_CATEGORY_ESS,
         "FSS": MAP_CATEGORY_FSS,
@@ -1492,15 +1735,17 @@ def build_category_specific_map_examples(map_category: str) -> str:
         examples.append("- Official questionnaire cases:\n  e.g., PSQI, ESS, SSS, FSS, BQ, ISI, RLS, IRLS, RBDSQ, PHQ, BDI, QOL, MQ")
         examples.append("- Coded value example:\n  e.g., answer can be scaled as yes: 1, no:2, but cdm might require no:0, yes:1")
         examples.append("- Name example:\n  e.g., Lee chang-bong -> 이창봉")
+    elif category == MAP_CATEGORY_BASIC:
+        examples.append("- Name example:\n  e.g., Lee chang-bong -> 이창봉")
+        examples.append("- Occupation omission examples:\n  e.g., 취준, 취업준비, 휴직, 무직, X")
     elif category == MAP_CATEGORY_PHX_HABIT:
         examples.append("- Coded value example:\n  e.g., answer can be scaled as yes: 1, no:2, but cdm might require no:0, yes:1")
         examples.append("- Name example:\n  e.g., Lee chang-bong -> 이창봉")
-        examples.append("- Occupation omission examples:\n  e.g., 취준, 취업준비, 휴직, 무직, X")
     elif category == MAP_CATEGORY_SLEEP_BEHAVIOR:
         examples.append("- Coded value example:\n  e.g., answer can be scaled as yes: 1, no:2, but cdm might require no:0, yes:1")
         examples.append("- Time-splitting example:\n  e.g., 주말 2시간 30분 -> HH=2, MM=30")
         examples.append("- Name example:\n  e.g., Lee chang-bong -> 이창봉")
-    elif category == MAP_CATEGORY_PSG:
+    elif category in {MAP_CATEGORY_MQ, MAP_CATEGORY_PSG, MAP_CATEGORY_CPAP}:
         examples.append("- Name example:\n  e.g., Lee chang-bong -> 이창봉")
         examples.append("- Numeric severity/frequency example:\n  e.g., waking frequency 3 times > 1 time")
     else:
@@ -1605,6 +1850,100 @@ def _merge_line_ranges(raw_ranges: Any) -> List[Dict[str, int]]:
         cur = {"start_line": start, "end_line": end}
     merged.append(cur)
     return merged
+
+
+def _compiled_official_title_patterns_by_category() -> Dict[str, List[re.Pattern[str]]]:
+    out: Dict[str, List[re.Pattern[str]]] = {}
+    for category, families in OFFICIAL_CATEGORY_FAMILY_MAP.items():
+        pats: List[re.Pattern[str]] = []
+        for family in families:
+            for pattern in OFFICIAL_QUESTIONNAIRE_RULE_PATTERNS.get(family, ()):
+                pats.append(re.compile(pattern, re.I))
+        out[category] = pats
+    return out
+
+
+_OFFICIAL_TITLE_PATTERNS_BY_CATEGORY = _compiled_official_title_patterns_by_category()
+
+
+def _line_matches_official_title(category: str, text: Any) -> bool:
+    raw = str(text or "")
+    return any(p.search(raw) for p in _OFFICIAL_TITLE_PATTERNS_BY_CATEGORY.get(category, []))
+
+
+def _looks_like_title_only_official_text(category: str, text: Any) -> bool:
+    raw = str(text or "")
+    informative_lines = [line.strip() for line in raw.splitlines() if is_informative_ocr_line(line)]
+    if not informative_lines:
+        return False
+    if not _line_matches_official_title(category, informative_lines[0]):
+        return False
+    if len(informative_lines) <= 2:
+        return True
+    if len(informative_lines) <= 4 and not any(re.search(r"^\s*\d+[.)]|\|\s*항목|selected!|not selected", line) for line in informative_lines[1:]):
+        return True
+    return False
+
+
+def _expand_title_only_official_ranges(
+    range_map: Dict[str, Any],
+    merged_ocr_text: str,
+) -> Dict[str, List[Dict[str, int]]]:
+    lines = str(merged_ocr_text or "").splitlines()
+    if not lines:
+        return {category: _merge_line_ranges(ranges) for category, ranges in range_map.items()}
+
+    source_marker_re = re.compile(r"^\s*\[SOURCE_IMAGE:\s*[^\]]+\]\s*$")
+    generic_break_res = [re.compile(pattern, re.I) for pattern in OFFICIAL_GENERIC_BREAK_PATTERNS]
+
+    title_specs: List[Tuple[int, str]] = []
+    for idx, raw in enumerate(lines, start=1):
+        for category in OFFICIAL_CATEGORY_FAMILY_MAP:
+            if _line_matches_official_title(category, raw):
+                title_specs.append((idx, category))
+                break
+    title_specs = sorted(title_specs, key=lambda item: item[0])
+
+    def find_block_end(start_line: int) -> int:
+        next_title_line: Optional[int] = None
+        for title_idx, _ in title_specs:
+            if title_idx > start_line:
+                next_title_line = title_idx
+                break
+        end = len(lines)
+        for probe in range(start_line + 1, len(lines) + 1):
+            probe_text = str(lines[probe - 1] or "")
+            if source_marker_re.match(probe_text):
+                end = probe - 1
+                break
+            if next_title_line is not None and probe >= next_title_line:
+                end = next_title_line - 1
+                break
+            if any(p.search(probe_text) for p in generic_break_res):
+                end = probe - 1
+                break
+        return max(start_line, end)
+
+    out: Dict[str, List[Dict[str, int]]] = {category: _merge_line_ranges(ranges) for category, ranges in range_map.items()}
+    for category in OFFICIAL_CATEGORY_FAMILY_MAP:
+        current_ranges = list(out.get(category, []))
+        additions: List[Dict[str, int]] = []
+        for rng in current_ranges:
+            text = reconstruct_category_text_from_line_ranges(merged_ocr_text=merged_ocr_text, raw_ranges=[rng])
+            if not _looks_like_title_only_official_text(category, text):
+                continue
+            title_line = None
+            for idx in range(int(rng["start_line"]), int(rng["end_line"]) + 1):
+                if _line_matches_official_title(category, lines[idx - 1]):
+                    title_line = idx
+                    break
+            if title_line is None:
+                continue
+            end_line = find_block_end(title_line)
+            additions.append({"start_line": title_line, "end_line": end_line})
+        if additions:
+            out[category] = _merge_line_ranges(current_ranges + additions)
+    return out
 
 
 def _subtract_line_ranges(raw_ranges: Any, subtract_ranges: Any) -> List[Dict[str, int]]:
@@ -1778,6 +2117,57 @@ def find_basic_sleep_history_line_ranges(merged_ocr_text: str) -> List[Dict[str,
     return _merge_line_ranges(out)
 
 
+def find_basic_info_line_ranges(merged_ocr_text: str) -> List[Dict[str, int]]:
+    lines = str(merged_ocr_text or "").splitlines()
+    if not lines:
+        return []
+
+    source_marker_re = re.compile(r"^\s*\[SOURCE_IMAGE:\s*[^\]]+\]\s*$")
+    stop_re = re.compile(
+        r"^\s*(병력과 가족력|생활 습관|수면 습관|주증상:|1\.\s*현재 앓고 있는 질환|1\.\s*카페인 섭취에 관한 질문)\b",
+        re.I,
+    )
+    anchor_patterns = [
+        re.compile(pat, re.I) for pat in MAP_CATEGORY_RULE_PATTERNS.get(MAP_CATEGORY_BASIC, ())
+    ]
+    continuation_re = re.compile(
+        r"(주민등록|교육:|결혼:|하루 평균 근무시간|시\s*\d+분부터|교대 근무를 합니까|만약 예라면|신장:|체중:|kg/m²|cm\b|kg\b|sex:|age:|date:|psg#:|body mass index|neck circumference)",
+        re.I,
+    )
+
+    selected: set[int] = set()
+    for idx, raw in enumerate(lines, start=1):
+        text = str(raw or "")
+        if not any(p.search(text) for p in anchor_patterns):
+            continue
+        selected.add(idx)
+        for probe in range(idx + 1, min(len(lines), idx + 4) + 1):
+            probe_text = str(lines[probe - 1] or "")
+            if source_marker_re.match(probe_text) or stop_re.search(probe_text):
+                break
+            if not probe_text.strip():
+                selected.add(probe)
+                continue
+            if continuation_re.search(probe_text) or any(p.search(probe_text) for p in anchor_patterns):
+                selected.add(probe)
+                continue
+            break
+
+    ranges: List[Tuple[int, int]] = []
+    sorted_lines = sorted(selected)
+    if not sorted_lines:
+        return []
+    start = prev = sorted_lines[0]
+    for idx in sorted_lines[1:]:
+        if idx <= prev + 1:
+            prev = idx
+            continue
+        ranges.append((start, prev))
+        start = prev = idx
+    ranges.append((start, prev))
+    return _merge_line_ranges(ranges)
+
+
 def build_category_split_user_prompt(merged_ocr_text: str, source_images: Sequence[str]) -> str:
     output_lines = []
     for category in PATIENT_MAP_CATEGORIES:
@@ -1786,6 +2176,7 @@ def build_category_split_user_prompt(merged_ocr_text: str, source_images: Sequen
         )
     output_schema = "{\n" + ",\n".join(output_lines) + "\n}"
     numbered_ocr_text = build_numbered_merged_ocr_text(str(merged_ocr_text or "")[:45000])
+    category_count = len(PATIENT_MAP_CATEGORIES)
     return f"""MERGED PATIENT OCR TEXT:
 \"\"\"{numbered_ocr_text}\"\"\"
 
@@ -1796,7 +2187,7 @@ ROLE
 - You are a patient-level OCR text categorization and splitting agent for a sleep-clinic pipeline.
 
 TASK
-- Split the total OCR text into 14 map-category line-range selections.
+- Split the total OCR text into {category_count} map-category line-range selections.
 - The unit of assignment is relevant OCR text span, represented as line ranges in the numbered merged OCR text above.
 - Each relevant OCR text span should belong to exactly one best-fit category.
 
@@ -1817,8 +2208,11 @@ GUIDELINES / RULES
 - Prefer exact questionnaire/report titles, item wording, and unmistakable page content.
 - Do not leave recognized question lines unassigned.
 - Before finalizing, check whether any visible question/title lines remain uncategorized.
-- Use `psg` for PSG reports, CPAP reports, and PSG signal/report pages.
-- Use `phx_habit` for occupation, shiftwork, lifestyle habits, medical-history checklist, and family-history questionnaire text.
+- Use `basic` for identity, demographics, anthropometrics, PSG identifiers, occupation, and shift-work text.
+- Use `psg` for PSG reports and PSG signal/report pages.
+- Use `cpap` for CPAP reports and CPAP pressure-step titration sections.
+- Use `mq` for the morning questionnaire (`아침 질문 사항`).
+- Use `phx_habit` for lifestyle habits, medical-history checklist, and family-history questionnaire text.
 - Use `sleep_behavior` for general sleep-history, wake frequency, nap, sleep sufficiency, and narcolepsy-style symptom questionnaire text.
 - If there is no relevant text for a category, return an empty list for that category.
 
@@ -1831,7 +2225,7 @@ CAUTIONS
 OUTPUT FORMAT
 - Return ONE flat JSON object only.
 - Do not wrap the JSON inside another key.
-- Use exactly these 14 keys:
+- Use exactly these {category_count} keys:
 {output_schema}
 """
 
@@ -1884,8 +2278,11 @@ RULES
 - Do not leave any leftover informative block unassigned.
 - Do not output copied OCR text directly. Output only line ranges.
 - Do not paraphrase, summarize, normalize, translate, correct, or rewrite OCR text.
-- Use `psg` for PSG reports, CPAP reports, and PSG signal/report pages.
-- Use `phx_habit` for occupation, shiftwork, lifestyle habits, medical-history checklist, and family-history questionnaire text.
+- Use `basic` for identity, demographics, anthropometrics, PSG identifiers, occupation, and shift-work text.
+- Use `psg` for PSG reports and PSG signal/report pages.
+- Use `cpap` for CPAP reports and CPAP pressure-step titration sections.
+- Use `mq` for the morning questionnaire (`아침 질문 사항`).
+- Use `phx_habit` for lifestyle habits, medical-history checklist, and family-history questionnaire text.
 - Use `sleep_behavior` for general sleep-history, wake frequency, nap, sleep sufficiency, and narcolepsy-style symptom questionnaire text.
 - Prefer exact questionnaire/report titles, item wording, and unmistakable page content.
 - You may assign multiple leftover ranges to the same category.
@@ -1893,7 +2290,7 @@ RULES
 
 OUTPUT FORMAT
 - Return ONE flat JSON object only.
-- Use exactly these 14 keys:
+- Use exactly these {len(PATIENT_MAP_CATEGORIES)} keys:
 {output_schema}
 """
 
@@ -1959,10 +2356,32 @@ def _extract_assigned_ranges_from_records(records: Sequence[Dict[str, Any]]) -> 
 
 
 LEFTOVER_ASSIGNMENT_PATTERNS: Dict[str, Tuple[str, ...]] = {
-    MAP_CATEGORY_PHX_HABIT: (
-        r"\b직업\b",
+    MAP_CATEGORY_BASIC: (
+        r"\b등록번호\b",
+        r"\b병록 번호\b",
+        r"\bhospi\.\s*no\b",
+        r"\bid:\b",
+        r"\b성명\b",
+        r"\bname\b",
+        r"\b성별\b",
+        r"\bsex\b",
+        r"\b연령\b",
+        r"\bage\b",
+        r"\b검사일\b",
+        r"\bdate:\b",
+        r"\bstudy date\b",
+        r"\bpsg#\b",
+        r"\btest no\.\b",
+        r"\bsleep study number\b",
+        r"\bheight\b",
+        r"\bweight\b",
+        r"\bbody mass index\b",
+        r"\bneck circumference\b",
+        r"\b직업:\b",
+        r"교대\s*근무",
         r"근무시간",
-        r"교대 근무",
+    ),
+    MAP_CATEGORY_PHX_HABIT: (
         r"병력과 가족력",
         r"현재 앓고 있는 질환",
         r"그 외 다음과 같은 질환",
@@ -2000,6 +2419,14 @@ LEFTOVER_ASSIGNMENT_PATTERNS: Dict[str, Tuple[str, ...]] = {
         r"몸[이에]\s*실제로 힘이 빠져",
         r"불면증이 위의 증상으로",
     ),
+    MAP_CATEGORY_MQ: (
+        r"아침 질문 사항",
+        r"어젯밤 불을 끈 후",
+        r"어젯밤에 얼마나 오랫동안 잠을 잤다고 생각",
+        r"오늘 아침 어떻게 잠에서 깨어났",
+        r"어젯밤 당신은 꿈을 기억하십니까",
+        r"현재 당신은 어떻다고 생각",
+    ),
     MAP_CATEGORY_PSG: (
         r"polysomnography",
         r"sleep architecture",
@@ -2010,12 +2437,20 @@ LEFTOVER_ASSIGNMENT_PATTERNS: Dict[str, Tuple[str, ...]] = {
         r"arousal index",
         r"diagnosis",
         r"conclusion",
-        r"cpap",
         r"study date",
         r"test no\.",
-        r"아침 질문 사항",
         r"수면다원검사",
         r"수면검사",
+    ),
+    MAP_CATEGORY_CPAP: (
+        r"cpap polysomnography report",
+        r"full night cpap polysomnography report",
+        r"\bcpap\b",
+        r"\bpap\b",
+        r"pressure\s+\d+\s*cmh2o",
+        r"optimal cpap pressure",
+        r"mask leak",
+        r"mouth breathing",
     ),
     MAP_CATEGORY_RBD: RBD_SUPPLEMENT_PATTERNS,
 }
@@ -2033,7 +2468,7 @@ def assign_leftover_ranges_to_best_categories(
         category_patterns[category] = [re.compile(pat, re.I) for pat in pats]
 
     family_to_category = {
-        "MQ": MAP_CATEGORY_PSG,
+        "MQ": MAP_CATEGORY_MQ,
         "SSS": MAP_CATEGORY_SSS,
         "ESS": MAP_CATEGORY_ESS,
         "FSS": MAP_CATEGORY_FSS,
@@ -2066,6 +2501,10 @@ def assign_leftover_ranges_to_best_categories(
                     score += 1
             if category == MAP_CATEGORY_PSG and re.search(r"(report|result|diagnosis|conclusion|study date|test no\.|수면검사)", text, re.I):
                 score += 2
+            if category == MAP_CATEGORY_CPAP and re.search(r"(cpap|pap|pressure\s+\d+\s*cmh2o|optimal cpap pressure)", text, re.I):
+                score += 2
+            if category == MAP_CATEGORY_MQ and re.search(r"(아침 질문 사항|어젯밤|오늘 아침)", text, re.I):
+                score += 2
             if score > best_score:
                 best_score = score
                 best_category = category
@@ -2076,7 +2515,10 @@ def assign_leftover_ranges_to_best_categories(
 def _finalize_category_records_from_range_map(
     range_map: Dict[str, Any],
     merged_ocr_text: str,
+    apply_structural_repairs: bool = True,
 ) -> List[Dict[str, Any]]:
+    if apply_structural_repairs:
+        range_map = _expand_title_only_official_ranges(range_map, merged_ocr_text)
     records: List[Dict[str, Any]] = []
     seen_categories: set[str] = set()
     for category in PATIENT_MAP_CATEGORIES:
@@ -2096,6 +2538,9 @@ def _finalize_category_records_from_range_map(
             }
         )
         seen_categories.add(category)
+    if not apply_structural_repairs:
+        return records
+
     if MAP_CATEGORY_RBD not in seen_categories:
         rbd_ranges = find_rbd_supplement_line_ranges(merged_ocr_text)
         rbd_text = reconstruct_category_text_from_line_ranges(
@@ -2111,6 +2556,30 @@ def _finalize_category_records_from_range_map(
                     "merged_text": rbd_text,
                 }
             )
+    basic_ranges = find_basic_info_line_ranges(merged_ocr_text)
+    if basic_ranges:
+        basic_text = reconstruct_category_text_from_line_ranges(
+            merged_ocr_text=merged_ocr_text,
+            raw_ranges=basic_ranges,
+        )
+        if basic_text:
+            basic_record = next((item for item in records if item.get("category") == MAP_CATEGORY_BASIC), None)
+            if basic_record is None:
+                records.append(
+                    {
+                        "category": MAP_CATEGORY_BASIC,
+                        "source_images": [],
+                        "line_ranges": basic_ranges,
+                        "merged_text": basic_text,
+                    }
+                )
+            else:
+                combined_ranges = _merge_line_ranges(list(basic_record.get("line_ranges") or []) + basic_ranges)
+                basic_record["line_ranges"] = combined_ranges
+                basic_record["merged_text"] = reconstruct_category_text_from_line_ranges(
+                    merged_ocr_text=merged_ocr_text,
+                    raw_ranges=combined_ranges,
+                )
     mq_ranges = find_morning_questionnaire_line_ranges(merged_ocr_text)
     if mq_ranges:
         mq_text = reconstruct_category_text_from_line_ranges(
@@ -2118,20 +2587,20 @@ def _finalize_category_records_from_range_map(
             raw_ranges=mq_ranges,
         )
         if mq_text:
-            psg_record = next((item for item in records if item.get("category") == MAP_CATEGORY_PSG), None)
-            if psg_record is None:
+            mq_record = next((item for item in records if item.get("category") == MAP_CATEGORY_MQ), None)
+            if mq_record is None:
                 records.append(
                     {
-                        "category": MAP_CATEGORY_PSG,
+                        "category": MAP_CATEGORY_MQ,
                         "source_images": [],
                         "line_ranges": mq_ranges,
                         "merged_text": mq_text,
                     }
                 )
             else:
-                combined_ranges = _merge_line_ranges(list(psg_record.get("line_ranges") or []) + mq_ranges)
-                psg_record["line_ranges"] = combined_ranges
-                psg_record["merged_text"] = reconstruct_category_text_from_line_ranges(
+                combined_ranges = _merge_line_ranges(list(mq_record.get("line_ranges") or []) + mq_ranges)
+                mq_record["line_ranges"] = combined_ranges
+                mq_record["merged_text"] = reconstruct_category_text_from_line_ranges(
                     merged_ocr_text=merged_ocr_text,
                     raw_ranges=combined_ranges,
                 )
@@ -2207,6 +2676,8 @@ def _finalize_category_records_from_range_map(
             for item in records:
                 if item is category_record:
                     continue
+                if item.get("category") == MAP_CATEGORY_BASIC and category_name == MAP_CATEGORY_SLEEP_BEHAVIOR:
+                    continue
                 overlap_ranges.extend(list(item.get("line_ranges") or []))
             trimmed_ranges = _subtract_line_ranges(category_record.get("line_ranges") or [], overlap_ranges)
             category_record["line_ranges"] = trimmed_ranges
@@ -2214,6 +2685,20 @@ def _finalize_category_records_from_range_map(
                 merged_ocr_text=merged_ocr_text,
                 raw_ranges=trimmed_ranges,
             )
+
+    basic_record = next((item for item in records if item.get("category") == MAP_CATEGORY_BASIC), None)
+    if basic_record is not None:
+        overlap_ranges: List[Dict[str, int]] = []
+        for item in records:
+            if item is basic_record:
+                continue
+            overlap_ranges.extend(list(item.get("line_ranges") or []))
+        trimmed_ranges = _subtract_line_ranges(basic_record.get("line_ranges") or [], overlap_ranges)
+        basic_record["line_ranges"] = trimmed_ranges
+        basic_record["merged_text"] = reconstruct_category_text_from_line_ranges(
+            merged_ocr_text=merged_ocr_text,
+            raw_ranges=trimmed_ranges,
+        )
     return [item for item in records if str(item.get("merged_text") or "").strip()]
 
 
@@ -2252,6 +2737,22 @@ def normalize_category_split_decision(
     for image_name in image_names:
         fallback_page_categories[image_name] = classify_page_map_categories_heuristic(text_by_image.get(image_name, ""))
     return merge_ocr_texts_by_category(image_name_text_pairs, fallback_page_categories)
+
+
+def preview_raw_category_split_decision(
+    raw_payload: Dict[str, Any],
+    image_name_text_pairs: Sequence[Tuple[str, str]],
+) -> List[Dict[str, Any]]:
+    merged_ocr_text = merge_ocr_text_blocks(list(image_name_text_pairs))
+    raw_map = raw_payload.get("category_texts", raw_payload)
+    if not isinstance(raw_map, dict):
+        return []
+    range_map = {category: normalize_line_ranges(raw_map.get(category, [])) for category in PATIENT_MAP_CATEGORIES}
+    return _finalize_category_records_from_range_map(
+        range_map,
+        merged_ocr_text,
+        apply_structural_repairs=False,
+    )
 
 
 def merge_ocr_texts_by_category(
@@ -2295,23 +2796,78 @@ def build_category_specific_map_rules(map_category: str, ocr_text: str) -> str:
     has_cpap_cue = any(cue in str(ocr_text or "").lower() for cue in cpap_cues)
 
     rules: List[str] = []
-    if category == MAP_CATEGORY_PSG:
+    if category == MAP_CATEGORY_BASIC:
         rules.extend(
             [
-                "- This is the `psg` category. Always attempt Hospital_ID, Name, PSG_Date, PSG_No, PSG_Type, SEX, AGE, Height_cm, Weight_kg, BMI, Neckcir_cm when directly supported by the OCR text.",
-                "- Extract PSG report values, respiratory indices, diagnoses, and summary metrics only when directly supported.",
+                "- This is the `basic` category. Focus only on identity, demographics, anthropometrics, PSG identifiers, occupation, and shift-work fields.",
+                "- Extract only directly visible `basic` fields. Do not emit PHx checklist items, habits, sleep-behavior items, PSG report metrics, or official questionnaire keys from this category.",
+                "- If multiple candidate values appear for the same `basic` key in the OCR text, choose the value that appears most often in the `basic` text.",
+                "- For repeated `basic` values, use majority vote by appearance count first. If there is a tie, prefer the cleaner hospital/report header value over questionnaire/free-text mentions.",
+                "- Do not output multiple values for the same `basic` key. Choose one final best value after applying the majority-vote rule.",
+                "- Normalize occupation to Korean wording when possible. If CDM options exist for the occupation, map to the correct option code.",
+                "- If OCR answer indicates job-seeking/leave or jobless (e.g., 취준, 취업준비, 휴직, 무직, X), omit Occupation.",
+                "- Shiftwork should come only from the explicit `교대 근무` question or equivalent direct wording.",
                 "- If the patient name is written in Korean, output the Korean name in Korean. If written in English, output the English name in English. Do not romanize Korean names, and do not translate English names into Korean.",
-                "- Diagnosis_etc must come only from the `II. Diagnosis` section after `I. Result`, or just before `III. Conclusion and Recommendation`. Extract only lines beginning with `#`, preserve order, and join them with newline characters.",
             ]
         )
-        if has_cpap_cue:
-            rules.append("- CPAP titration cues are present in this OCR text. CPAP pressure-step keys such as Pressure_XX and PrXX_* are eligible when directly supported.")
-        else:
-            rules.append("- No CPAP titration cue is present in this OCR text. Do not emit CPAP pressure-step keys such as Pressure_XX and PrXX_*.")
+    elif category == MAP_CATEGORY_MQ:
+        rules.extend(
+            [
+                "- This is the `mq` category. Focus on the morning-after PSG questionnaire (`아침 질문 사항`) only.",
+                "- Extract only the official morning questionnaire answers from this page/block. Do not emit PSG report metrics or CPAP titration fields from morning-questionnaire text.",
+                "- Process the morning questionnaire strictly question by question from Q1 through Q11. Do not finalize until every visible morning-questionnaire question has been checked.",
+                "- Ignore easy header fields such as patient ID, name, sex/age, or study date when morning-questionnaire answers are visible. The main target in this category is the `PSG_M_*` key family.",
+                "- Review the `PSG_M_*` candidate keys one by one. If the corresponding question is visible in the OCR text, fill the matching key(s). Do not leave directly supported `PSG_M_*` keys blank.",
+                "- Morning questionnaire key mapping:",
+                "  - Q1 (`어제 밤 평소 복용하시던 수면제가 있다면 복용 여부`) -> `PSG_M_01_Hypnotics`.",
+                "  - Q2 (`불을 끈 후 잠이 드는데 까지 얼마나 걸렸습니까?`) -> `PSG_M_02_SubSL_HH`, `PSG_M_02_SubSL_MM`.",
+                "  - Q3 (`보통 집에서 잠이 드는데 걸리는 시간과 비교`) -> `PSG_M_02_SubSL_Home`.",
+                "  - Q4 (`어젯밤에 얼마나 오랫동안 잠을 잤다고 생각하십니까?`) -> `PSG_M_03_SubSD_HH`, `PSG_M_03_SubSD_MM`.",
+                "  - Q5 (`보통 집에서 잠자는 시간과 비교`) -> `PSG_M_03_SubSD_Home`.",
+                "  - Q6 (`어젯밤에 잠자는 동안 몇 번 깨었습니까?`) -> `PSG_M_04_WakeNo`.",
+                "  - Q7 (`현재 당신은 어떻다고 생각 되십니까?`) -> `PSG_M_05_Alertness`.",
+                "  - Q8 (`오늘 아침 신체적으로 불편한 점이 있다면?`) -> `PSG_M_05_Complaint`.",
+                "  - Q9 (`수면에 대한 평가` five subitems ㄱ~ㅁ) -> `PSG_M_06_SQ_a` through `PSG_M_06_SQ_e`.",
+                "  - Q10 (`어젯밤 당신은 꿈을 기억하십니까?`) -> `PSG_M_07_Dream` and, if 꿈 내용 is written, `PSG_M_07_Dream_text`.",
+                "  - Q11 (`오늘 아침 어떻게 잠에서 깨어났습니까?`) -> `PSG_M_08_Wake`.",
+                "  - Q12 has no `mq` CDM key in the current schema. Do not force-map Q12 into another `PSG_M_*` key.",
+                "- For Q9, treat the five subitems `ㄱ, ㄴ, ㄷ, ㄹ, ㅁ` as five required separate outputs. Do not collapse them into one summary.",
+                "- For Q2 and Q4, parse hours and minutes separately. If only one part is visible, fill the visible part and leave the missing part blank rather than guessing.",
+                "- For Q8 and Q10 dream description, copy the directly written free-text content only when it is explicitly present. If the field is blank or marked as no dream, leave the text key blank.",
+                "- If the patient name is written in Korean, output the Korean name in Korean. If written in English, output the English name in English. Do not romanize Korean names, and do not translate English names into Korean.",
+            ]
+        )
+    elif category == MAP_CATEGORY_PSG:
+        rules.extend(
+            [
+                "- This is the `psg` category. Focus on common PSG metrics and PSG-specific report values. Do not emit CPAP pressure-step titration keys from this category.",
+                "- Extract PSG report values, respiratory indices, diagnoses, and summary metrics only when directly supported.",
+                "- If the patient name is written in Korean, output the Korean name in Korean. If written in English, output the English name in English. Do not romanize Korean names, and do not translate English names into Korean.",
+                "- Diagnosis_etc:",
+                "  1st Position: `II. Diagnosis` section after `I. Result`.",
+                "  2nd Position: Before `III. Conclusion and Recommendation`.",
+                "  Extract only the lines that begin with `#` from the source text. If multiple lines match, preserve their order and join them with newline characters.",
+            ]
+        )
+    elif category == MAP_CATEGORY_CPAP:
+        rules.extend(
+            [
+                "- This is the `cpap` category. Focus on common PSG metrics plus CPAP titration pressure-step fields and CPAP-specific report values.",
+                "- The candidate block for this category may already be narrowed to the pressure steps detected from the OCR text. Treat the listed Pressure_XX and PrXX_* keys as the allowed CPAP titration steps for this report.",
+                "- CPAP pressure-step keys such as Pressure_XX and PrXX_* are eligible only when directly supported by the OCR text. Do not invent later pressure steps that are not listed in the candidate block.",
+                "- If the patient name is written in Korean, output the Korean name in Korean. If written in English, output the English name in English. Do not romanize Korean names, and do not translate English names into Korean.",
+                "- Diagnosis_etc:",
+                "  1st Position: `II. Diagnosis` section after `I. Result`.",
+                "  2nd Position: Before `III. Conclusion and Recommendation`.",
+                "  Extract only the lines that begin with `#` from the source text. If multiple lines match, preserve their order and join them with newline characters.",
+            ]
+        )
+        if not has_cpap_cue:
+            rules.append("- If no CPAP cue is visible on the page, do not guess CPAP pressure-step values. Only map directly supported CPAP fields.")
     elif category == MAP_CATEGORY_PHX_HABIT:
         rules.extend(
             [
-                "- This is the `phx_habit` category. Focus on occupation, shiftwork, lifestyle habits, medical history checklist, and family history questionnaire content.",
+                "- This is the `phx_habit` category. Focus on lifestyle habits, medical history checklist, and family history questionnaire content.",
                 "- Do not emit official questionnaire item keys unless the OCR text explicitly contains that official questionnaire content.",
                 "- Review the candidate CDM keys one by one. For each candidate, actively search the OCR text for the matching checklist item or direct medical-history context before deciding.",
                 "- Do not finalize until every candidate key in this category has been checked against the OCR text.",
@@ -2319,9 +2875,6 @@ def build_category_specific_map_rules(map_category: str, ocr_text: str) -> str:
                 "- For the explicit PHx checklist, process the checklist item by item from the first listed disease to the last listed disease. Do not stop after the first positive item; traverse the checklist to the end before finalizing PHx_* decisions.",
                 "- If the PHx checklist has been reformatted into one checklist item per line for mapping, treat each line as one explicit checklist decision and map every directly supported PHx_* key from those lines.",
                 "- After finishing the PHx checklist pass, do a second pass over the habit section and explicitly check Habit_Caffein, Habit_Alcohol, Habit_Smoking, and Habit_Workout.",
-                "- If the patient name is written in Korean, output the Korean name in Korean. If written in English, output the English name in English. Do not romanize Korean names, and do not translate English names into Korean.",
-                "- Normalize occupation to Korean wording when possible. If CDM options exist for the occupation, map to the correct option code.",
-                "- If OCR answer indicates job-seeking/leave or jobless (e.g., 취준, 취업준비, 휴직, 무직, X), omit Occupation.",
                 "- PHx_* keys should come from the explicit medical-history checklist/list on the page first whenever that checklist is present.",
                 "- If the checklist is absent or clearly inconsistent with another explicit patient medical-history statement on the page, you may use other direct medical-history context that matches the CDM key context. Do not use vague symptoms or family history.",
                 "- If a PHx condition is visibly listed and marked/checked, output 1. If visibly listed and unmarked/not checked, output 0. If not visible on the page, omit the key.",
@@ -2345,7 +2898,7 @@ def build_category_specific_map_rules(map_category: str, ocr_text: str) -> str:
         rules.extend(
             [
                 "- This is the `psqi` category.",
-                "- Focus on official PSQI items plus shared `basic` keys only when directly supported.",
+                "- Focus on official PSQI items only.",
                 "- If the patient name is written in Korean, output the Korean name in Korean. If written in English, output the English name in English. Do not romanize Korean names, and do not translate English names into Korean.",
                 "- Find the OFFICIAL PSQI questions, not similar questions.",
                 "- If OCR text explicitly contains even single `주중`/`주말` (or weekday/weekend wording), map to ONLY `_week` / `_free` keys for PSQI 01-04.",
@@ -2356,7 +2909,7 @@ def build_category_specific_map_rules(map_category: str, ocr_text: str) -> str:
         rules.extend(
             [
                 f"- This is the `{category}` category.",
-                f"- Focus on `{category}` item keys plus shared `basic` keys only when directly supported.",
+                f"- Focus on `{category}` item keys only when directly supported.",
                 "- For official questionnaire items, direct wording identity is required; do not map merely similar questions.",
                 "- If the patient name is written in Korean, output the Korean name in Korean. If written in English, output the English name in English. Do not romanize Korean names, and do not translate English names into Korean.",
             ]
@@ -2872,6 +3425,314 @@ def apply_core_backfill(
     return additions, rejected
 
 
+def _page_result_category_name(image_name: str) -> str:
+    m = re.search(r"category__([a-z_]+)", str(image_name), re.I)
+    if not m:
+        return ""
+    return normalize_map_category_name(m.group(1))
+
+
+def _extract_dates_from_text(text: str) -> List[str]:
+    out: List[str] = []
+    seen = set()
+
+    for y, m, d in re.findall(r"\b(20\d{2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{1,2})\b", text):
+        val = _to_yyyymmdd_from_parts(int(y), int(m), int(d))
+        if val and val not in seen:
+            seen.add(val)
+            out.append(val)
+
+    for y, m, d in re.findall(r"\b(20\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일?", text):
+        val = _to_yyyymmdd_from_parts(int(y), int(m), int(d))
+        if val and val not in seen:
+            seen.add(val)
+            out.append(val)
+
+    return out
+
+
+def _clean_basic_name(raw: str) -> Optional[str]:
+    s = str(raw or "").replace("*", " ").strip()
+    if not s:
+        return None
+    s = re.sub(
+        r"\b(?:id|height|age|sex|dept|study\s*date|date|psg#?|weight|technician|body\s*mass\s*index|neck\s*circumference)\b.*$",
+        "",
+        s,
+        flags=re.I,
+    )
+    s = re.sub(r"^[^0-9A-Za-z가-힣]+", "", s)
+    s = re.sub(r"[^0-9A-Za-z가-힣\s]+$", "", s)
+    s = re.sub(r"\s{2,}", " ", s).strip(" ,;:-")
+    if not s:
+        return None
+    if any(ch.isdigit() for ch in s):
+        return None
+    if len(s.replace(" ", "")) < 2:
+        return None
+    return s
+
+
+def _clean_basic_occupation(raw: str) -> Optional[str]:
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    s = re.split(r"\b(?:결혼|근무시간|교대\s*근무|주증상|주소|전화번호|휴대폰)\b", s, maxsplit=1)[0]
+    s = s.strip(" ,;:-")
+    s = re.sub(r"\s{2,}", " ", s)
+    s = re.sub(r"^(?:없음|none)\s+(?=[0-9A-Za-z가-힣])", "", s, flags=re.I).strip()
+    if not s or re.fullmatch(r"[_\-\s□]+", s):
+        return None
+    if re.search(r"(?:취준|취업준비|휴직|무직|^x$|^없음$)", s, re.I):
+        return None
+    occupation_map = {
+        "us military": "군인",
+        "military": "군인",
+        "housewife": "주부",
+    }
+    mapped = occupation_map.get(s.lower())
+    if mapped:
+        return mapped
+    return s
+
+
+def _basic_report_like_rank(key: str, line: str, category: str) -> int:
+    rank = 50
+    line_l = str(line or "").lower()
+    if key in BASIC_REPORT_HEADER_KEYS:
+        if re.search(r"\b(?:id|name|age|sex|date|study date|psg#?|height|weight|body mass index|neck circumference)\b", line_l):
+            rank -= 20
+        if re.search(r"(?:등록번호|병록\s*번호|성명|검사일|검사날짜|성별|연령|신장|체중|목둘레|목 둘레)", line):
+            rank -= 10
+        if category in {MAP_CATEGORY_BASIC, MAP_CATEGORY_PSG, MAP_CATEGORY_CPAP}:
+            rank -= 6
+    elif key in BASIC_PROFILE_KEYS:
+        if re.search(r"(?:직업|occupation|교대\s*근무|shift\s*work)", line, re.I):
+            rank -= 20
+        if category in {MAP_CATEGORY_BASIC, MAP_CATEGORY_PHX_HABIT, MAP_CATEGORY_MQ}:
+            rank -= 8
+    return rank
+
+
+def _basic_candidate_quality(key: str, value: Any) -> int:
+    s = str(normalize_value(value) or "").strip()
+    if not s:
+        return 0
+    if key == "Name":
+        compact = re.sub(r"\s+", "", s)
+        if re.fullmatch(r"[가-힣]{2,5}", compact):
+            return 3
+        if re.fullmatch(r"[A-Za-z ]{2,40}", s):
+            return 2
+        return 1
+    if key == "PSG_No":
+        if re.fullmatch(r"P\d{4}[-/]\d+", s, re.I):
+            return 3
+        if re.fullmatch(r"P?\d{3}[-/]\d+", s, re.I):
+            return 2
+        return 1
+    if key in {"Hospital_ID", "AGE", "Height_cm", "Weight_kg", "BMI", "Neckcir_cm"}:
+        return 2
+    if key == "Occupation":
+        return 2 if not re.search(r"(?:취준|취업준비|휴직|무직|^x$|^없음$)", s, re.I) else 0
+    return 1
+
+
+def _extract_basic_candidates_from_line(line: str) -> List[Tuple[str, Any]]:
+    text = str(line or "").strip()
+    if not text:
+        return []
+
+    out: List[Tuple[str, Any]] = []
+
+    for m in re.finditer(r"(?:등록번호|병록\s*번호|ID)\s*[:#]?\s*([0-9]{6,12})", text, flags=re.I):
+        out.append(("Hospital_ID", m.group(1).strip()))
+
+    for pat in (
+        r"(?:성명|환자명)\s*[:#]?\s*([^\n\r|]{2,80})",
+        r"\bName\b\s*[:#]?\s*([^\n\r|]{2,80})",
+    ):
+        for m in re.finditer(pat, text, flags=re.I):
+            cleaned = _clean_basic_name(m.group(1))
+            if cleaned:
+                out.append(("Name", cleaned))
+
+    if re.search(r"(?:검사일|검사날짜|study date|date)\b", text, flags=re.I):
+        for d in _extract_dates_from_text(text):
+            out.append(("PSG_Date", d))
+
+    for m in re.finditer(r"(?:PSG#?|Test\s*No\.?)\s*[:#]?\s*([Pp]?\d{1,4}\s*[-/]\s*\d+)", text, flags=re.I):
+        out.append(("PSG_No", re.sub(r"\s+", "", m.group(1))))
+
+    sex_age = re.search(r"sex\s*/\s*age\s*[:#]?\s*([MF])\s*/\s*(\d{1,3})", text, flags=re.I)
+    if sex_age:
+        out.append(("SEX", sex_age.group(1).upper()))
+        out.append(("AGE", sex_age.group(2)))
+    else:
+        sex_selected = re.search(
+            r"(?:성별|sex)[^\n\r]{0,40}selected!:\s*(male|female|m|f|남|여)",
+            text,
+            flags=re.I,
+        )
+        if sex_selected:
+            out.append(("SEX", sex_selected.group(1)))
+        sex_selected_inline = re.search(
+            r"\bsex\s*\([^)\n\r]{0,20}\)\s*\[selected!:\s*(male|female|m|f|남|여)\]",
+            text,
+            flags=re.I,
+        )
+        if sex_selected_inline:
+            out.append(("SEX", sex_selected_inline.group(1)))
+        sex = re.search(r"(?:성별|sex)\s*[:#]?\s*(male|female|m|f|남|여)\b", text, flags=re.I)
+        if sex:
+            out.append(("SEX", sex.group(1)))
+        age = re.search(r"(?:연령|age)\s*[:#]?\s*(\d{1,3})\b", text, flags=re.I)
+        if age:
+            out.append(("AGE", age.group(1)))
+
+    height_matches = list(re.finditer(r"(?:신장|height)\s*[:#]?\s*(\d{2,3}(?:\.\d+)?)\s*cm\b", text, flags=re.I))
+    weight_matches = list(re.finditer(r"(?:체중|weight)\s*[:#]?\s*(\d{2,3}(?:\.\d+)?)\s*kg\b", text, flags=re.I))
+    if height_matches and weight_matches:
+        for hm, wm in zip(height_matches, weight_matches):
+            h_val = float(hm.group(1))
+            w_val = float(wm.group(1))
+            # Conservative swap repair for obvious OCR label reversal, e.g. Height 63 / Weight 144.
+            if h_val < 100 and 100 <= w_val <= 230:
+                h_val, w_val = w_val, h_val
+            out.append(("Height_cm", h_val))
+            out.append(("Weight_kg", w_val))
+    else:
+        for m in height_matches:
+            out.append(("Height_cm", m.group(1)))
+        for m in weight_matches:
+            out.append(("Weight_kg", m.group(1)))
+    for m in re.finditer(r"(?:BMI|Body\s*Mass\s*Index|Body mass index)\s*[:#]?\s*(\d{1,2}(?:\.\d+)?)", text, flags=re.I):
+        out.append(("BMI", m.group(1)))
+    for m in re.finditer(r"(?:Neck\s*Circumference|목\s*둘레|목둘레)\s*[:#]?\s*(\d{1,2}(?:\.\d+)?)\s*cm\b", text, flags=re.I):
+        out.append(("Neckcir_cm", m.group(1)))
+
+    occ = re.search(r"(?:직업|occupation)\s*[:#]?\s*([^\n\r]+)", text, flags=re.I)
+    if occ:
+        cleaned = _clean_basic_occupation(occ.group(1))
+        if cleaned:
+            out.append(("Occupation", cleaned))
+
+    if re.search(r"교대\s*근무|shift\s*work(?:er)?", text, flags=re.I):
+        if re.search(r"(?:selected!:\s*아니오|\[\s*selected!:\s*no\s*\]|\b아니오\b|\bno\b)", text, flags=re.I):
+            out.append(("Shiftwork", "No"))
+        elif re.search(r"(?:selected!:\s*예|\[\s*selected!:\s*yes\s*\]|\b예\b|\byes\b)", text, flags=re.I):
+            out.append(("Shiftwork", "Yes"))
+
+    return out
+
+
+def collect_basic_text_evidence(
+    page_results: List["PageResult"],
+    retriever: "CDMRetriever",
+) -> Dict[str, List[Dict[str, Any]]]:
+    evidence: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for pr in page_results:
+        category = _page_result_category_name(pr.image_name)
+        for raw_line in re.split(r"[\r\n]+", pr.ocr_text or ""):
+            line = str(raw_line or "").strip()
+            if not line:
+                continue
+            for key, value in _extract_basic_candidates_from_line(line):
+                row = retriever.row_by_key.get(key)
+                if row is None:
+                    continue
+                norm, reason = validate_value_with_cdm(row, value)
+                if norm is None:
+                    if key == "Shiftwork" and str(value).strip():
+                        norm = 1 if str(value).strip().lower() in {"yes", "예"} else 0
+                    else:
+                        logger.debug("Skipping basic evidence %s=%r from %s (%s)", key, value, pr.image_name, reason)
+                        continue
+                evidence[key].append(
+                    {
+                        "image": pr.image_name,
+                        "value": norm,
+                        "value_token": _value_token(norm),
+                        "cdm_context": str(row.desc or "").strip(),
+                        "input_context": {
+                            "filled_by": "basic_evidence",
+                            "question": line,
+                            "page_type": category,
+                        },
+                        "source_rank": _basic_report_like_rank(key, line, category),
+                        "quality": _basic_candidate_quality(key, norm),
+                    }
+                )
+    return evidence
+
+
+def _choose_best_basic_entry(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    return sorted(
+        entries,
+        key=lambda e: (
+            int(e.get("source_rank", 999999)),
+            -int(e.get("quality", 0)),
+            len(str(normalize_value(e.get("value")) or "")),
+        ),
+        reverse=False,
+    )[0]
+
+
+def apply_basic_evidence_resolution(
+    merged: Dict[str, Any],
+    conflicts: Dict[str, List[Dict[str, Any]]],
+    provenance: Dict[str, List[Dict[str, Any]]],
+    page_results: List["PageResult"],
+    retriever: "CDMRetriever",
+) -> None:
+    harvested = collect_basic_text_evidence(page_results, retriever)
+    for key in BASIC_RESOLUTION_KEYS:
+        entries = harvested.get(key) or []
+        if not entries:
+            continue
+
+        grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for e in entries:
+            grouped[str(e.get("value_token", ""))].append(e)
+
+        score_rows: List[Tuple[str, int, int, int, Dict[str, Any]]] = []
+        for token, token_entries in grouped.items():
+            best = _choose_best_basic_entry(token_entries)
+            score_rows.append(
+                (
+                    token,
+                    len(token_entries),
+                    -int(best.get("source_rank", 999999)),
+                    int(best.get("quality", 0)),
+                    best,
+                )
+            )
+
+        score_rows.sort(key=lambda x: (x[1], x[2], x[3]), reverse=True)
+        provenance[key] = [
+            {
+                "image": e.get("image"),
+                "value": e.get("value"),
+                "cdm_context": str(e.get("cdm_context", "")).strip(),
+                "input_context": _normalize_input_context(e.get("input_context")),
+            }
+            for e in entries
+        ]
+
+        if len(score_rows) == 1:
+            merged[key] = score_rows[0][4]["value"]
+            conflicts.pop(key, None)
+            continue
+
+        if len(score_rows) >= 2 and score_rows[0][1:4] == score_rows[1][1:4]:
+            merged.pop(key, None)
+            conflicts[key] = provenance[key]
+            continue
+
+        merged[key] = score_rows[0][4]["value"]
+        conflicts.pop(key, None)
+
+
 def should_run_recall_pass(ocr_text: str, valid_obj: Dict[str, Any], min_keys: int = 12) -> bool:
     if len(valid_obj) >= min_keys:
         return False
@@ -2938,6 +3799,53 @@ def _psg_no_suffix(psg_no: Any) -> Optional[str]:
     if not m:
         return None
     return str(int(m.group(1)))
+
+
+def canonicalize_psg_no(psg_no: Any, psg_date: Any = None) -> Optional[str]:
+    if psg_no is None:
+        return None
+    s = re.sub(r"\s+", "", str(psg_no).strip()).replace("/", "-")
+    if not s:
+        return None
+    m = re.match(r"^[Pp]?(\d{1,4})-(\d+)$", s)
+    if not m:
+        return s
+
+    left = m.group(1)
+    suffix = str(int(m.group(2)))
+    date_token = _to_yyyymmdd(psg_date)
+    year = date_token[:4] if date_token else ""
+
+    if len(left) == 4:
+        year_token = left
+    elif year and len(left) in {2, 3} and year.endswith(left):
+        year_token = year
+    elif year and len(left) == 1 and year.endswith(f"0{left}"):
+        year_token = year
+    else:
+        year_token = left
+    return f"P{year_token}-{suffix}"
+
+
+def infer_psg_type_from_page_results(
+    merged: Dict[str, Any],
+    page_results: List["PageResult"],
+) -> Optional[str]:
+    existing = _psg_type_to_token(merged.get("PSG_Type"))
+    if existing:
+        return existing
+
+    for pr in page_results:
+        category = _page_result_category_name(pr.image_name)
+        txt = str(pr.ocr_text or "")
+        if category == MAP_CATEGORY_CPAP and _collect_cpap_dynamic_candidate_metadata(txt).get("is_cpap_report"):
+            return "C"
+        if re.search(r"\bmslt\b|multiple sleep latency", txt, re.I):
+            return "M"
+
+    if normalize_value(merged.get("PSG_No")) is not None:
+        return "P"
+    return None
 
 
 def synthesize_database_id(row: Dict[str, Any]) -> Optional[str]:
@@ -3618,6 +4526,50 @@ class CDMRetriever:
         fallback = [row for row in self.rows if normalize_map_category_name(getattr(row, "map_category", "")) == MAP_CATEGORY_BASIC]
         return fallback or list(self.rows)
 
+    def map_agent_rows(self, category_name: str) -> List["CDMRow"]:
+        category = normalize_map_category_name(category_name)
+        allowed: set[str]
+        if category == MAP_CATEGORY_BASIC:
+            allowed = {MAP_CATEGORY_BASIC}
+        elif category == MAP_CATEGORY_MQ:
+            allowed = {MAP_CATEGORY_MQ}
+        elif category == MAP_CATEGORY_PSG:
+            allowed = {MAP_CATEGORY_COMMON_PSG, MAP_CATEGORY_PSG}
+        elif category == MAP_CATEGORY_CPAP:
+            allowed = {MAP_CATEGORY_COMMON_PSG, MAP_CATEGORY_CPAP}
+        else:
+            allowed = {category}
+        rows = [row for row in self.rows if normalize_map_category_name(getattr(row, "map_category", "")) in allowed]
+        if rows:
+            return rows
+        fallback = [row for row in self.rows if normalize_map_category_name(getattr(row, "map_category", "")) == MAP_CATEGORY_BASIC]
+        return fallback or list(self.rows)
+
+    def cpap_rows_for_steps(self, allowed_steps: Sequence[int]) -> List["CDMRow"]:
+        allowed_set = {int(step) for step in allowed_steps if CPAP_PRESSURE_STEP_START <= int(step) <= CPAP_PRESSURE_STEP_END}
+        rows: List[CDMRow] = []
+        for row in self.rows:
+            category = normalize_map_category_name(getattr(row, "map_category", ""))
+            if category == MAP_CATEGORY_COMMON_PSG:
+                rows.append(row)
+                continue
+            if category != MAP_CATEGORY_CPAP:
+                continue
+            pressure_match = CPAP_PRESSURE_KEY_RE.fullmatch(row.key)
+            metric_match = CPAP_PRESSURE_METRIC_KEY_RE.fullmatch(row.key)
+            if pressure_match:
+                step = int(pressure_match.group(1))
+                if step in allowed_set:
+                    rows.append(row)
+                continue
+            if metric_match:
+                step = int(metric_match.group(1))
+                if step in allowed_set:
+                    rows.append(row)
+                continue
+            rows.append(row)
+        return rows
+
     def _filter_questionnaire_rows_by_type(
         self,
         rows: List["CDMRow"],
@@ -3644,11 +4596,25 @@ class CDMRetriever:
 
     def prompt_block_for_category(self, category_name: str, include_basic: bool = True) -> str:
         category = normalize_map_category_name(category_name)
-        cache_key = (f"category::{category}", "with_basic" if include_basic else "no_basic")
+        cache_key = (f"category::{category}", "map_agent")
         cached = self._route_prompt_blocks.get(cache_key)
         if cached:
             return cached
-        rows = self.category_rows(category, include_basic=include_basic)
+        rows = self.map_agent_rows(category)
+        if category == MAP_CATEGORY_CPAP:
+            block = format_cpap_candidate_rows_compact(rows, max_chars=50000)
+        else:
+            block = format_candidate_rows([(row, 1.0) for row in rows], include_score=False, max_chars=50000)
+        self._route_prompt_blocks[cache_key] = block
+        return block
+
+    def prompt_block_for_cpap_steps(self, allowed_steps: Sequence[int]) -> str:
+        normalized_steps = tuple(sorted({int(step) for step in allowed_steps if CPAP_PRESSURE_STEP_START <= int(step) <= CPAP_PRESSURE_STEP_END}))
+        cache_key = ("category::cpap", f"steps::{','.join(f'{s:02d}' for s in normalized_steps)}")
+        cached = self._route_prompt_blocks.get(cache_key)
+        if cached:
+            return cached
+        rows = self.cpap_rows_for_steps(normalized_steps)
         block = format_candidate_rows([(row, 1.0) for row in rows], include_score=False, max_chars=50000)
         self._route_prompt_blocks[cache_key] = block
         return block
@@ -3946,6 +4912,7 @@ OCR_SYSTEM = """
         ([selected!: 0]) 차를 운전하고 가다가 교통체증으로 몇 분간 멈추어 서 있을 때
 - Write '[not selected: option]' for visibly unchosen options inline when the question-answer association is explicit.
     e.g., [not selected: 0], [not selected: No], [not selected: option text]]
+    e.g., [not selected: all explictly unmarked options], [not selected: 0, 2, 3] when it's more efficient to write.
     e.g., [not selected] if psqi table row is visibly unmarked.
 - Write '[not answered]' when a question is clearly not answered or left blank without any visible markings.
     e.g., [not answered] if psqi question is not answered.
@@ -4910,7 +5877,7 @@ def build_category_map_user_prompt(
     map_category: str,
 ) -> str:
     category = normalize_map_category_name(map_category)
-    guidance = MAP_CATEGORY_PROMPT_GUIDANCE.get(category, "Focus only on the current category and shared basic fields.")
+    guidance = MAP_CATEGORY_PROMPT_GUIDANCE.get(category, "Focus only on the current category.")
     category_rules = build_category_specific_map_rules(category, ocr_text)
     return f"""OCR TEXT:
 \"\"\"{ocr_text[:18000]}\"\"\"
@@ -4930,7 +5897,6 @@ CANDIDATE CDM FIELDS (use ONLY these keys):
 
 Rules:
 - Map only keys that are directly supported by the OCR text and fit the candidate CDM fields above.
-- Shared `basic` fields may appear in every category, but do not infer them if they are not explicitly visible.
 - If the OCR text contains multiple source pages, keep question-answer association faithful to the exact local text.
 - Shared non-category rules:
 {build_shared_map_user_rules_text()}
@@ -4957,7 +5923,7 @@ def build_category_map_recall_user_prompt(
     map_category: str,
 ) -> str:
     category = normalize_map_category_name(map_category)
-    guidance = MAP_CATEGORY_PROMPT_GUIDANCE.get(category, "Focus only on the current category and shared basic fields.")
+    guidance = MAP_CATEGORY_PROMPT_GUIDANCE.get(category, "Focus only on the current category.")
     category_rules = build_category_specific_map_rules(category, ocr_text)
     return f"""OCR TEXT:
 \"\"\"{ocr_text[:18000]}\"\"\"
@@ -4996,6 +5962,36 @@ Output schema reminder:
     }}
   }}
 }}"""
+
+
+def build_category_candidate_spec(
+    retriever: "CDMRetriever",
+    map_category: str,
+    ocr_text: str,
+) -> Dict[str, Any]:
+    category = normalize_map_category_name(map_category)
+    if category == MAP_CATEGORY_CPAP:
+        meta = _collect_cpap_dynamic_candidate_metadata(ocr_text)
+        allowed_steps = list(meta.get("allowed_steps") or [])
+        rows = retriever.cpap_rows_for_steps(allowed_steps)
+        block = retriever.prompt_block_for_cpap_steps(allowed_steps)
+        meta["candidate_key_count"] = len(rows)
+        return {
+            "rows": rows,
+            "candidates_block": block,
+            "meta": meta,
+        }
+
+    rows = retriever.map_agent_rows(category)
+    block = retriever.prompt_block_for_category(category)
+    return {
+        "rows": rows,
+        "candidates_block": block,
+        "meta": {
+            "candidate_mode": "default",
+            "candidate_key_count": len(rows),
+        },
+    }
 
 
 def build_map_user_prompt(
@@ -5335,12 +6331,7 @@ def build_output_row(merged: Dict[str, Any], output_columns: List[str]) -> Dict[
 
     # Canonicalize PSG_No prefix.
     if "PSG_No" in row and not _is_missing_value(row.get("PSG_No")):
-        s = str(row["PSG_No"]).strip()
-        m = re.match(r"^p(\d{4}\s*[-/]\s*\d+)$", s, flags=re.I)
-        if m:
-            row["PSG_No"] = "P" + re.sub(r"\s+", "", m.group(1))
-        else:
-            row["PSG_No"] = s
+        row["PSG_No"] = canonicalize_psg_no(row.get("PSG_No"), row.get("PSG_Date")) or str(row["PSG_No"]).strip()
 
     # Questionnaire-specific normalization.
     apply_psqi_format_and_time_rules(row)
@@ -5380,6 +6371,7 @@ def build_patient_result(
     page_results: List[PageResult],
     duplicates: List[Dict[str, Any]],
     page_errors: List[Dict[str, str]],
+    retriever: "CDMRetriever",
     output_columns: List[str],
     save_intermediate: bool,
     out_dir: Path,
@@ -5429,6 +6421,16 @@ def build_patient_result(
                 )
 
     merged, conflicts, provenance = merge_page_results(page_results)
+    apply_basic_evidence_resolution(
+        merged=merged,
+        conflicts=conflicts,
+        provenance=provenance,
+        page_results=page_results,
+        retriever=retriever,
+    )
+    inferred_psg_type = infer_psg_type_from_page_results(merged, page_results)
+    if inferred_psg_type:
+        merged["PSG_Type"] = inferred_psg_type
     row = build_output_row(merged, output_columns)
     validation_rejections = {pr.image_name: pr.rejected_fields for pr in page_results if pr.rejected_fields}
     total_valid_keys = sum(len(pr.valid_json) for pr in page_results)
@@ -5937,6 +6939,7 @@ async def process_one_patient(
         page_results=page_results,
         duplicates=duplicates,
         page_errors=page_errors,
+        retriever=retriever,
         output_columns=output_columns,
         save_intermediate=save_intermediate,
         out_dir=out_dir,
@@ -6426,6 +7429,7 @@ def process_patients_with_batch_api(
             page_results=ctx["page_results"],
             duplicates=ctx["duplicates"],
             page_errors=ctx["page_errors"],
+            retriever=retriever,
             output_columns=output_columns,
             save_intermediate=save_intermediate,
             out_dir=output_dir,
