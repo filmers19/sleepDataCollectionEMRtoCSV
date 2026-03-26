@@ -1191,6 +1191,11 @@ def safe_extract_json(text: Any) -> Dict[str, Any]:
 def normalize_value(v: Any) -> Any:
     if v is None:
         return None
+    try:
+        if pd.isna(v):
+            return None
+    except Exception:
+        pass
     if isinstance(v, str):
         s = v.strip()
         if s == "" or s.lower() in {"null", "none", "n/a", "na"}:
@@ -1497,13 +1502,15 @@ def parse_value_context_map(obj: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[s
     """
     Normalize model output into:
       - values: key -> mapped value candidate
-      - contexts: key -> {filled_by, question, page_type}
+      - contexts: key -> legacy context metadata if present
       - cdm_contexts: key -> string explaining what the CDM key is about
 
     Accepts both old format:
       {"KEY": 1}
-    and new format:
+    legacy wrapped format:
       {"KEY": {"CDM_Context": "...", "value": 1, "input_context": {...}}}
+    and current wrapped format:
+      {"KEY": {"CDM_Context": "...", "value": 1}}
     """
     values: Dict[str, Any] = {}
     contexts: Dict[str, Dict[str, Any]] = {}
@@ -3737,11 +3744,6 @@ def collect_basic_text_evidence(
                         "value": norm,
                         "value_token": _value_token(norm),
                         "cdm_context": str(row.desc or "").strip(),
-                        "input_context": {
-                            "filled_by": "basic_evidence",
-                            "question": line,
-                            "page_type": category,
-                        },
                         "source_rank": _basic_report_like_rank(key, line, category),
                         "quality": _basic_candidate_quality(key, norm),
                     }
@@ -3797,7 +3799,7 @@ def apply_basic_evidence_resolution(
                 "image": e.get("image"),
                 "value": e.get("value"),
                 "cdm_context": str(e.get("cdm_context", "")).strip(),
-                "input_context": _normalize_input_context(e.get("input_context")),
+                "certainty_total_score": _coerce_certainty_total_score(e.get("certainty_total_score")),
             }
             for e in entries
         ]
@@ -4206,7 +4208,6 @@ def _apply_cpap_output_rules(row: Dict[str, Any]) -> None:
 
 def _apply_cpap_page_guardrails(
     valid: Dict[str, Any],
-    raw_contexts: Dict[str, Dict[str, Any]],
     rejected: Dict[str, Dict[str, Any]],
 ) -> None:
     supported_steps: set[int] = set()
@@ -4218,12 +4219,10 @@ def _apply_cpap_page_guardrails(
         step = int(m.group(1))
         iv = _coerce_int(value)
         if iv is None or iv != step:
-            ctx = _normalize_input_context(raw_contexts.get(key))
             valid.pop(key, None)
             rejected[key] = {
                 "value": value,
                 "reason": "cpap_pressure_value_mismatch",
-                "input_context": ctx,
             }
             continue
         valid[key] = iv
@@ -4234,42 +4233,19 @@ def _apply_cpap_page_guardrails(
         if not m:
             continue
         step = int(m.group(1))
-        ctx = _normalize_input_context(raw_contexts.get(key))
-        cues = _extract_cpap_pressure_cues(ctx.get("question"))
-        if cues and step not in cues:
-            valid.pop(key, None)
-            rejected[key] = {
-                "value": value,
-                "reason": "cpap_pressure_row_mismatch",
-                "input_context": ctx,
-            }
-            continue
-        if cues and step in cues:
+        if step in supported_steps:
             supported_steps.add(step)
 
     for key, value in list(valid.items()):
         m = CPAP_PRESSURE_METRIC_KEY_RE.fullmatch(key)
         if not m:
             continue
-        step = int(m.group(1))
-        ctx = _normalize_input_context(raw_contexts.get(key))
-        cues = _extract_cpap_pressure_cues(ctx.get("question"))
-        if not cues and step not in supported_steps:
-            valid.pop(key, None)
-            rejected[key] = {
-                "value": value,
-                "reason": "cpap_pressure_row_missing_evidence",
-                "input_context": ctx,
-            }
-            continue
-
         norm = _normalize_cpap_field_value(key, value)
         if norm is None and not _is_missing_value(value):
             valid.pop(key, None)
             rejected[key] = {
                 "value": value,
                 "reason": "cpap_placeholder_blank",
-                "input_context": ctx,
             }
             continue
         valid[key] = norm
@@ -4322,12 +4298,13 @@ def merge_page_results(
     by_key: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for pr in page_results:
         for k, v in pr.valid_json.items():
+            raw_meta = pr.raw_json.get(k) if isinstance(pr.raw_json, dict) else None
             by_key[k].append(
                 {
                     "image": pr.image_name,
                     "value": v,
                     "cdm_context": str(pr.cdm_contexts.get(k, "")).strip(),
-                    "input_context": _normalize_input_context(pr.input_contexts.get(k)),
+                    "certainty_total_score": _extract_total_score_from_raw_entry(raw_meta),
                 }
             )
 
@@ -4345,7 +4322,7 @@ def merge_page_results(
                     "image": e.get("image"),
                     "value": e.get("value"),
                     "cdm_context": str(e.get("cdm_context", "")).strip(),
-                    "input_context": _normalize_input_context(e.get("input_context")),
+                    "certainty_total_score": _coerce_certainty_total_score(e.get("certainty_total_score")),
                 }
             )
         value_tokens = {_value_token(normalize_value(e.get("value"))) for e in conflict_entries}
@@ -4463,7 +4440,6 @@ class PageResult:
     ocr_text: str
     raw_json: Dict[str, Any]
     valid_json: Dict[str, Any]
-    input_contexts: Dict[str, Dict[str, str]]
     cdm_contexts: Dict[str, str]
     rejected_fields: Dict[str, Dict[str, Any]]
 
@@ -5096,10 +5072,29 @@ You will get two inputs:
             - If time values measured in time units (e.g., hrs, min, sec, day), store the median.
             - If neutral frequency reported, store the median. (e.g., nap 3-4 times -> 3.5 times)
             - If severity or negative metrics reported, store the more severe one. (e.g., SQ_Wakefreq 1~3 times -> 3 times)
-4. CONTEXT
-    - Context is used by later resolver agent to resolve between multiple values of the same CDM key.
-    - 'filled_by': doctor for diagnosis and diagnostic report, patient when self-reported questionnaire.
-    - 'question': The one sentence - exact question/context that matches to the CDM key in OCR text.
+4. CDM CONTEXT
+    - `CDM_Context` is used later to audit and resolve between multiple values of the same CDM key.
+    - Keep it brief and faithful to the target CDM field meaning.
+5. CERTAINTY
+    - For each mapped CDM key, also score certainty using 4 topics. Score each topic as 0, 1, or 2.
+    - `context_match`
+        - 0: weak, indirect, or uncertain match to the intended field/question
+        - 1: plausible match, but not exact or not uniquely anchored
+        - 2: exact and unambiguous field/question/title match
+    - `value_clarity`
+        - 0: hard to read, partial, noisy, ambiguous, or weakly indicated
+        - 1: readable but somewhat noisy, incomplete, or not perfectly explicit
+        - 2: clearly readable and explicit
+    - `evidence_strength`
+        - 0: mostly inferred, reconstructed, or guessed from nearby context
+        - 1: partly direct but still incomplete or interpretive
+        - 2: directly and explicitly supported on the page
+    - `consistency`
+        - 0: competing evidence, conflicting candidate, or notable uncertainty
+        - 1: minor inconsistency or possible alternative interpretation
+        - 2: no visible competing interpretation
+    - 'total_score':
+        - `total_score` = sum of the above 4 topic scores, range 0-8
 
 # Caution
 - OCR text -> CDM Keys
@@ -5117,9 +5112,12 @@ Output JSON object only. Return ONE JSON object that maps CDM keys to objects wi
   "CDM_KEY": {
     "CDM_Context": "<brief explanation copied from the Korean_Context/English_Context>",
     "value": <value>,
-    "input_context": {
-      "filled_by": "doctor|patient",
-      "question": "<one sentence - exact question/context that matches to the CDM key in OCR text>"
+    "certainty": {
+      "context_match": 0,
+      "value_clarity": 0,
+      "evidence_strength": 0,
+      "consistency": 0,
+      "total_score": 0
     }
   }
 }
@@ -5149,7 +5147,7 @@ Task:
 - Follow coded options/range/date rules exactly.
 - If uncertain, omit the key.
 - Use the same output schema as MAP step:
-  {"CDM_KEY":{"CDM_Context":"...","value":..., "input_context":{"filled_by":"doctor|patient","question":"..."}}}
+  {"CDM_KEY":{"CDM_Context":"...","value":...,"certainty":{"context_match":0,"value_clarity":0,"evidence_strength":0,"consistency":0,"total_score":0}}}
 Output JSON object only.
 """
 
@@ -5162,17 +5160,16 @@ Your job is to choose the best candidate only from the provided candidates for e
 # Input per candidate
 - value
 - CDM_Context
-- input_context.question
-- page_type
+- source image
 - CDM metadata (description, format/range, options)
 
 # Critical decision rules
 1) Remove obvious context mismatches first.
-- Candidate question/page_type must match the CDM key semantics.
+- Candidate CDM context and source page must match the CDM key semantics.
 2) Enforce CDM validity.
 - Prefer candidates consistent with options, format/range, and date constraints.
 3) Tie-break with source clarity.
-- Prefer candidates with clearer, more specific question evidence.
+- Prefer candidates with clearer, more specific CDM/source evidence.
 4) Keep reason short and concrete.
 
 # Special case
@@ -5350,17 +5347,15 @@ def merge_map_payload_into_stage(
     route_name: str,
     stage_raw: Dict[str, Any],
     stage_valid: Dict[str, Any],
-    stage_contexts: Dict[str, Dict[str, str]],
     stage_cdm_contexts: Dict[str, str],
     stage_rejected: Dict[str, Dict[str, Any]],
     official_questionnaire: bool = False,
     official_family: str = "NON",
 ) -> None:
-    raw_values, raw_contexts, raw_cdm_contexts = parse_value_context_map(raw_payload)
+    raw_values, _, raw_cdm_contexts = parse_value_context_map(raw_payload)
     add_valid, add_rejected = validate_extracted_json(raw_values, retriever, ocr_text=ocr_text)
     if route_name in CPAP_ROUTE_NAMES:
-        _apply_cpap_page_guardrails(add_valid, raw_contexts, add_rejected)
-    source_label = normalize_source_label(route_name)
+        _apply_cpap_page_guardrails(add_valid, add_rejected)
 
     for k, v in raw_payload.items():
         stage_raw.setdefault(k, v)
@@ -5369,7 +5364,6 @@ def merge_map_payload_into_stage(
 
     for k, v in add_valid.items():
         row = retriever.row_by_key.get(k)
-        ctx = _normalize_input_context(raw_contexts.get(k))
         if k in stage_valid:
             if _norm_cmp(stage_valid.get(k)) != _norm_cmp(v):
                 logger.debug(
@@ -5380,8 +5374,6 @@ def merge_map_payload_into_stage(
                 )
             continue
         stage_valid[k] = v
-        ctx["page_type"] = normalize_source_label(ctx.get("page_type") or source_label)
-        stage_contexts[k] = ctx
         stage_cdm_contexts[k] = str(raw_cdm_contexts.get(k) or (row.desc if row is not None else "")).strip()
 
 
@@ -5390,10 +5382,9 @@ async def map_ocr_text_with_split_agents_live(
     retriever: CDMRetriever,
     ocr_text: str,
     map_agents: List[MapAgentSpec],
-) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, str]], Dict[str, str], Dict[str, Dict[str, Any]]]:
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, str], Dict[str, Dict[str, Any]]]:
     stage_raw: Dict[str, Any] = {}
     stage_valid: Dict[str, Any] = {}
-    stage_contexts: Dict[str, Dict[str, str]] = {}
     stage_cdm_contexts: Dict[str, str] = {}
     stage_rejected: Dict[str, Dict[str, Any]] = {}
     route_info = await gemini_route_ocr_text(llm, ocr_text)
@@ -5423,7 +5414,6 @@ async def map_ocr_text_with_split_agents_live(
             route_name=route_name,
             stage_raw=stage_raw,
             stage_valid=stage_valid,
-            stage_contexts=stage_contexts,
             stage_cdm_contexts=stage_cdm_contexts,
             stage_rejected=stage_rejected,
         )
@@ -5441,7 +5431,6 @@ async def map_ocr_text_with_split_agents_live(
                 route_name=route_name,
                 stage_raw=stage_raw,
                 stage_valid=stage_valid,
-                stage_contexts=stage_contexts,
                 stage_cdm_contexts=stage_cdm_contexts,
                 stage_rejected=stage_rejected,
             )
@@ -5472,7 +5461,6 @@ async def map_ocr_text_with_split_agents_live(
                     route_name=route_name,
                     stage_raw=stage_raw,
                     stage_valid=stage_valid,
-                    stage_contexts=stage_contexts,
                     stage_cdm_contexts=stage_cdm_contexts,
                     stage_rejected=stage_rejected,
                 )
@@ -5491,7 +5479,6 @@ async def map_ocr_text_with_split_agents_live(
                 route_name=route_name,
                 stage_raw=stage_raw,
                 stage_valid=stage_valid,
-                stage_contexts=stage_contexts,
                 stage_cdm_contexts=stage_cdm_contexts,
                 stage_rejected=stage_rejected,
             )
@@ -5499,20 +5486,18 @@ async def map_ocr_text_with_split_agents_live(
     backfill_additions, backfill_rejected = apply_core_backfill(stage_valid, retriever, ocr_text)
     for k, v in backfill_additions.items():
         stage_valid[k] = v
-        stage_contexts.setdefault(k, {"filled_by": "", "question": "Derived from OCR header pattern", "page_type": route_name})
         stage_cdm_contexts.setdefault(k, str(retriever.row_by_key.get(k).desc if retriever.row_by_key.get(k) is not None else "").strip())
         stage_raw.setdefault(
             k,
             {
                 "CDM_Context": stage_cdm_contexts.get(k, ""),
                 "value": v,
-                "input_context": stage_contexts[k],
             },
         )
     for k, meta in backfill_rejected.items():
         stage_rejected.setdefault(k, meta)
 
-    return stage_raw, stage_valid, stage_contexts, stage_cdm_contexts, stage_rejected
+    return stage_raw, stage_valid, stage_cdm_contexts, stage_rejected
 
 
 def build_conflict_resolver_user_prompt(
@@ -5528,15 +5513,12 @@ def build_conflict_resolver_user_prompt(
             opt_items = sorted(row.options.items(), key=lambda x: int(x[0]))
         candidates: List[Dict[str, Any]] = []
         for idx, e in enumerate(entries):
-            ctx = _normalize_input_context(e.get("input_context"))
-            page_type = normalize_source_label(ctx.get("page_type"))
             candidates.append(
                 {
                     "index": idx,
                     "cdm_context": str(e.get("cdm_context") or (row.desc if row is not None else "")).strip(),
                     "value": e.get("value"),
-                    "question": _clip_prompt_text(ctx.get("question", ""), 260),
-                    "page_type": page_type,
+                    "source_image": str(e.get("image") or "").strip(),
                 }
             )
 
@@ -5558,41 +5540,24 @@ def build_conflict_resolver_user_prompt(
     )
 
 
-def _dedupe_question_list(values: Iterable[Any]) -> List[str]:
-    seen: set[str] = set()
-    out: List[str] = []
-    for v in values:
-        q = str(v or "").strip()
-        if not q:
-            continue
-        token = _normalize_text_token(q)
-        if token in seen:
-            continue
-        seen.add(token)
-        out.append(q)
-    return out
-
-
 def build_conflict_count_dataframe(
     conflicts: Dict[str, List[Dict[str, Any]]],
 ) -> pd.DataFrame:
     """
     Build a single conflict vote table:
-      CDM_KEY, value, count, input_context.question(list)
+      CDM_KEY, value, count
     Group identity:
       (CDM_KEY, normalized value token)
     """
     rows: List[Dict[str, Any]] = []
     for key, entries in conflicts.items():
         for e in entries:
-            ctx = _normalize_input_context(e.get("input_context"))
             norm_value = normalize_value(e.get("value"))
             rows.append(
                 {
                     "CDM_KEY": key,
                     "value": norm_value,
                     "value_token": _value_token(norm_value),
-                    "input_context.question": str(ctx.get("question") or "").strip(),
                 }
             )
     if not rows:
@@ -5601,7 +5566,6 @@ def build_conflict_count_dataframe(
                 "CDM_KEY",
                 "value",
                 "count",
-                "input_context.question",
             ]
         )
 
@@ -5611,7 +5575,6 @@ def build_conflict_count_dataframe(
         .agg(
             value=("value", "first"),
             count=("value_token", "size"),
-            **{"input_context.question": ("input_context.question", _dedupe_question_list)},
         )
         .reset_index(drop=True)
     )
@@ -5626,7 +5589,6 @@ def build_conflict_count_dataframe(
             "CDM_KEY",
             "value",
             "count",
-            "input_context.question",
         ]
     ]
 
@@ -5663,14 +5625,32 @@ def _pick_entry_index_by_token(
     return None
 
 
+def _pick_entry_index_by_token_and_certainty(
+    entries: List[Dict[str, Any]],
+    chosen_token: str,
+) -> Optional[int]:
+    best_idx: Optional[int] = None
+    best_score: float = -1.0
+    for idx, e in enumerate(entries):
+        if _value_token(normalize_value(e.get("value"))) != chosen_token:
+            continue
+        score = _coerce_certainty_total_score(e.get("certainty_total_score"))
+        score_num = float(score) if score is not None else -1.0
+        if best_idx is None or score_num > best_score:
+            best_idx = idx
+            best_score = score_num
+    return best_idx
+
+
 def resolve_conflicts_by_majority_vote(
     conflicts: Dict[str, List[Dict[str, Any]]],
 ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, List[Dict[str, Any]]], pd.DataFrame]:
     """
-    Deterministic pre-resolver:
+    Deterministic resolver:
     1) Aggregate conflicts into a single count dataframe.
-    2) Resolve by plain majority vote across normalized values.
-    3) Keep unresolved ties for LLM fallback.
+    2) Resolve by unique majority across normalized values.
+    3) If majority ties, use highest certainty among the tied values.
+    4) If still tied, keep unresolved.
     """
     vote_df = build_conflict_count_dataframe(conflicts)
     vote_df_internal = vote_df.copy()
@@ -5685,41 +5665,51 @@ def resolve_conflicts_by_majority_vote(
             pending[key] = entries
             continue
 
-        majority_df = key_df
-        majority_entries = entries
-        unique_tokens = majority_df["value_token"].dropna().astype(str).unique().tolist()
+        counts = _token_count_map(key_df)
         chosen_token: Optional[str] = None
         rule_used = ""
+        certainty_used: Optional[float] = None
 
+        unique_tokens = key_df["value_token"].dropna().astype(str).unique().tolist()
         if len(unique_tokens) == 1:
             chosen_token = unique_tokens[0]
             rule_used = "single_unique_value"
         else:
-            counts = _token_count_map(majority_df)
-            chosen_token = _unique_argmax_token(counts)
-            rule_used = "overall_majority"
+            top_count = max(counts.values()) if counts else 0
+            top_tokens = [tok for tok, c in counts.items() if c == top_count]
+            if len(top_tokens) == 1:
+                chosen_token = top_tokens[0]
+                rule_used = "overall_majority"
+            else:
+                token_best_scores: Dict[str, float] = {}
+                for tok in top_tokens:
+                    best = -1.0
+                    for e in entries:
+                        if _value_token(normalize_value(e.get("value"))) != tok:
+                            continue
+                        score = _coerce_certainty_total_score(e.get("certainty_total_score"))
+                        if score is not None and float(score) > best:
+                            best = float(score)
+                    token_best_scores[tok] = best
+                best_score = max(token_best_scores.values()) if token_best_scores else -1.0
+                best_tokens = [tok for tok, score in token_best_scores.items() if score == best_score]
+                if len(best_tokens) == 1 and best_score >= 0.0:
+                    chosen_token = best_tokens[0]
+                    rule_used = "certainty_tiebreak"
+                    certainty_used = best_score
 
         if not chosen_token:
-            pending[key] = majority_entries
+            pending[key] = entries
             continue
 
-        idx = _pick_entry_index_by_token(
-            entries=entries,
-            chosen_token=chosen_token,
-        )
+        idx = _pick_entry_index_by_token_and_certainty(entries=entries, chosen_token=chosen_token)
         if idx is None:
-            pending[key] = majority_entries
+            pending[key] = entries
             continue
 
         chosen = entries[idx]
         vote_rows: List[Dict[str, Any]] = []
         for _, row in key_df.iterrows():
-            questions_raw = row.get("input_context.question", [])
-            question_list: List[str] = []
-            if isinstance(questions_raw, list):
-                question_list = [str(q).strip() for q in questions_raw if str(q or "").strip()]
-            elif isinstance(questions_raw, tuple):
-                question_list = [str(q).strip() for q in list(questions_raw) if str(q or "").strip()]
             try:
                 vote_value = json.loads(str(row.get("value_token", "null")))
             except Exception:
@@ -5728,7 +5718,6 @@ def resolve_conflicts_by_majority_vote(
                 {
                     "value": vote_value,
                     "count": int(row.get("count", 0) or 0),
-                    "question": question_list,
                 }
             )
 
@@ -5738,10 +5727,12 @@ def resolve_conflicts_by_majority_vote(
             "chosen_value": chosen.get("value"),
             "reason": f"code_majority:{rule_used}",
             "source_image": chosen.get("image"),
-            "input_context": _normalize_input_context(chosen.get("input_context")),
-            "resolver_mode": "code_majority",
+            "resolver_mode": "code_certainty" if rule_used == "certainty_tiebreak" else "code_majority",
             "vote_table": vote_rows,
+            "certainty_total_score": _coerce_certainty_total_score(chosen.get("certainty_total_score")),
         }
+        if certainty_used is not None:
+            decisions[key]["certainty_tiebreak_score"] = certainty_used
 
     return overrides, decisions, pending, vote_df
 
@@ -5797,15 +5788,12 @@ def build_single_conflict_payload(
         opt_items = sorted(row.options.items(), key=lambda x: int(x[0]))
     candidates: List[Dict[str, Any]] = []
     for idx, e in enumerate(entries):
-        ctx = _normalize_input_context(e.get("input_context"))
-        page_type = normalize_source_label(ctx.get("page_type"))
         candidates.append(
             {
                 "index": idx,
                 "cdm_context": str(e.get("cdm_context") or (row.desc if row is not None else "")).strip(),
                 "value": e.get("value"),
-                "question": _clip_prompt_text(ctx.get("question", ""), 260),
-                "page_type": page_type,
+                "source_image": str(e.get("image") or "").strip(),
             }
         )
     return {
@@ -5886,7 +5874,6 @@ async def resolve_conflicts_keywise_fallback(
             "chosen_value": chosen.get("value"),
             "reason": reason,
             "source_image": chosen.get("image"),
-            "input_context": _normalize_input_context(chosen.get("input_context")),
             "resolver_mode": "llm_single",
         }
     return overrides, decisions
@@ -5901,100 +5888,18 @@ async def resolve_conflicts_with_llm(
     if not conflicts:
         return {}, {}
 
-    overrides: Dict[str, Any] = {}
-    decisions: Dict[str, Any] = {}
-    pending_conflicts: Dict[str, List[Dict[str, Any]]] = conflicts
     try:
-        code_overrides, code_decisions, pending_conflicts, _ = resolve_conflicts_by_majority_vote(conflicts)
-        overrides.update(code_overrides)
-        decisions.update(code_decisions)
+        overrides, decisions, pending_conflicts, _ = resolve_conflicts_by_majority_vote(conflicts)
     except Exception as e:
-        logger.warning("Code majority conflict pre-resolver failed for %s: %s", patient_name, e)
-        pending_conflicts = conflicts
+        logger.warning("Deterministic conflict resolver failed for %s: %s", patient_name, e)
+        return {}, {}
 
-    if not pending_conflicts:
-        return overrides, decisions
-
-    user = build_conflict_resolver_user_prompt(
-        patient_name=patient_name,
-        retriever=retriever,
-        conflicts=pending_conflicts,
-    )
-    resp = await ainvoke_with_retry(
-        llm,
-        [
-            SystemMessage(content=CONFLICT_RESOLVER_SYSTEM),
-            HumanMessage(content=user),
-        ],
-    )
-    try:
-        raw = await parse_json_with_feedback_repair(
-            llm=llm,
-            raw_content=resp.content,
-            schema_hint='{"resolved":{"CDM_KEY":{"chosen_index": <int>, "reason": "<brief reason>"}}}',
-            failed_context=f"patient={patient_name}\nkeys={json.dumps(list(pending_conflicts.keys()), ensure_ascii=False)}\nrequest={user}",
-            max_attempts=2,
-        )
-    except Exception as e:
-        logger.warning(
-            "Conflict resolver JSON parse failed for %s (%s). Falling back to per-key resolver.",
-            patient_name,
-            e,
-        )
-        fb_overrides, fb_decisions = await resolve_conflicts_keywise_fallback(
-            llm=llm,
-            retriever=retriever,
-            patient_name=patient_name,
-            conflicts=pending_conflicts,
-        )
-        overrides.update(fb_overrides)
-        decisions.update(fb_decisions)
-        return overrides, decisions
-    resolved_obj = raw.get("resolved", raw)
-    if not isinstance(resolved_obj, dict):
-        logger.warning(
-            "Conflict resolver returned non-dict payload for %s. Falling back to per-key resolver.",
+    if pending_conflicts:
+        logger.info(
+            "Leaving %d conflict keys unresolved for %s after majority/certainty rules",
+            len(pending_conflicts),
             patient_name,
         )
-        fb_overrides, fb_decisions = await resolve_conflicts_keywise_fallback(
-            llm=llm,
-            retriever=retriever,
-            patient_name=patient_name,
-            conflicts=pending_conflicts,
-        )
-        overrides.update(fb_overrides)
-        decisions.update(fb_decisions)
-        return overrides, decisions
-
-    for key, entries in pending_conflicts.items():
-        item = resolved_obj.get(key)
-        if not isinstance(item, dict):
-            continue
-        idx = _coerce_int(item.get("chosen_index"))
-        if idx is None:
-            continue
-        if idx < 0 or idx >= len(entries):
-            continue
-        chosen = entries[idx]
-        overrides[key] = chosen.get("value")
-        decisions[key] = {
-            "chosen_index": idx,
-            "chosen_value": chosen.get("value"),
-            "reason": str(item.get("reason", "")).strip(),
-            "source_image": chosen.get("image"),
-            "input_context": _normalize_input_context(chosen.get("input_context")),
-            "resolver_mode": "llm_batch",
-        }
-    still_pending = {key: entries for key, entries in pending_conflicts.items() if key not in overrides}
-    if still_pending:
-        fallback_overrides, fallback_decisions = await resolve_conflicts_keywise_fallback(
-            llm=llm,
-            retriever=retriever,
-            patient_name=patient_name,
-            conflicts=still_pending,
-        )
-        overrides.update(fallback_overrides)
-        decisions.update(fallback_decisions)
     return overrides, decisions
 
 
@@ -6034,10 +5939,12 @@ Output schema reminder:
   "CDM_KEY": {{
     "CDM_Context": "<brief explanation copied from the Korean_Context/English_Context>",
     "value": <value>,
-    "input_context": {{
-      "filled_by": "doctor|patient",
-      "question": "<one sentence - exact question/context that matches to the CDM key in OCR text>",
-      "page_type": "{category}"
+    "certainty": {{
+      "context_match": 0,
+      "value_clarity": 0,
+      "evidence_strength": 0,
+      "consistency": 0,
+      "total_score": 0
     }}
   }}
 }}"""
@@ -6082,10 +5989,12 @@ Output schema reminder:
   "CDM_KEY": {{
     "CDM_Context": "<brief explanation copied from the Korean_Context/English_Context>",
     "value": <value>,
-    "input_context": {{
-      "filled_by": "doctor|patient",
-      "question": "<one sentence - exact question/context that matches to the CDM key in OCR text>",
-      "page_type": "{category}"
+    "certainty": {{
+      "context_match": 0,
+      "value_clarity": 0,
+      "evidence_strength": 0,
+      "consistency": 0,
+      "total_score": 0
     }}
   }}
 }}"""
@@ -6391,7 +6300,7 @@ async def image_to_cdm_json(
     t_ocr = time.perf_counter() - t_ocr0
 
     t_map0 = time.perf_counter()
-    raw_obj, valid_obj, valid_contexts, rejected_fields = await map_ocr_text_with_split_agents_live(
+    raw_obj, valid_obj, valid_cdm_contexts, rejected_fields = await map_ocr_text_with_split_agents_live(
         llm=llm,
         retriever=retriever,
         ocr_text=ocr_text,
@@ -6425,8 +6334,7 @@ async def image_to_cdm_json(
         ocr_text=ocr_text,
         raw_json=raw_obj,
         valid_json=valid_obj,
-        input_contexts=valid_contexts,
-        cdm_contexts={k: str(retriever.row_by_key.get(k).desc if retriever.row_by_key.get(k) is not None else "").strip() for k in valid_obj.keys()},
+        cdm_contexts=valid_cdm_contexts,
         rejected_fields=rejected_fields,
     )
 
@@ -6535,7 +6443,6 @@ def build_patient_result(
                 k: {
                     "CDM_Context": str(pr.cdm_contexts.get(k, "")).strip(),
                     "value": v,
-                    "input_context": _normalize_input_context(pr.input_contexts.get(k)),
                 }
                 for k, v in pr.valid_json.items()
             }
@@ -6636,6 +6543,32 @@ def _value_sort_key(v: Any) -> Tuple[int, str]:
     return (1, str(nv))
 
 
+def _coerce_certainty_total_score(v: Any) -> Optional[float]:
+    nv = normalize_value(v)
+    if nv is None:
+        return None
+    if isinstance(nv, (int, float)) and not isinstance(nv, bool):
+        score = float(nv)
+        return score if 0.0 <= score <= 8.0 else None
+    s = str(nv).strip()
+    if not re.fullmatch(r"[+-]?\d+(?:\.\d+)?", s):
+        return None
+    try:
+        score = float(s)
+    except ValueError:
+        return None
+    return score if 0.0 <= score <= 8.0 else None
+
+
+def _extract_total_score_from_raw_entry(raw_entry: Any) -> Optional[float]:
+    if not isinstance(raw_entry, dict):
+        return None
+    certainty = raw_entry.get("certainty")
+    if not isinstance(certainty, dict):
+        return None
+    return _coerce_certainty_total_score(certainty.get("total_score"))
+
+
 def collect_assessment_type_entries(
     row: Optional[Dict[str, Any]],
     provenance: Dict[str, List[Dict[str, Any]]],
@@ -6680,6 +6613,149 @@ def collect_assessment_type_entries(
     return out
 
 
+def collect_map_category_accuracy_entries(
+    evaluation: Optional[Dict[str, Any]],
+    retriever: "CDMRetriever",
+) -> List[Dict[str, Any]]:
+    if not isinstance(evaluation, dict):
+        return []
+    if str(evaluation.get("evaluation_status") or "").strip().lower() != "completed":
+        return []
+
+    mismatch_fields = {
+        str(item.get("field") or "").strip()
+        for item in list(evaluation.get("mismatches") or [])
+        if isinstance(item, dict) and str(item.get("field") or "").strip()
+    }
+
+    grouped: Dict[str, Dict[str, Any]] = {}
+    seen_keys: set[str] = set()
+    for proto in retriever.rows:
+        key = str(getattr(proto, "key", "") or "").strip()
+        if not key or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        map_category = str(getattr(proto, "map_category", "") or "").strip()
+        if not map_category:
+            continue
+        slot = grouped.setdefault(
+            map_category,
+            {
+                "map_category": map_category,
+                "correct": 0,
+                "total": 0,
+            },
+        )
+        slot["total"] += 1
+        if key not in mismatch_fields:
+            slot["correct"] += 1
+
+    rows = list(grouped.values())
+    for row in rows:
+        total = int(row.get("total") or 0)
+        correct = int(row.get("correct") or 0)
+        row["accuracy"] = (correct / total) if total > 0 else None
+    rows.sort(key=lambda item: str(item.get("map_category") or "").lower())
+    return rows
+
+
+def collect_low_certainty_entries(
+    row: Optional[Dict[str, Any]],
+    provenance: Dict[str, List[Dict[str, Any]]],
+    retriever: "CDMRetriever",
+    limit: int = 20,
+) -> List[Dict[str, Any]]:
+    if not isinstance(row, dict):
+        return []
+
+    out: List[Dict[str, Any]] = []
+    for key, value in row.items():
+        norm_value = normalize_value(value)
+        if norm_value is None:
+            continue
+        prov_entries = list(provenance.get(key) or [])
+        if not prov_entries:
+            continue
+
+        row_token = _value_token(norm_value)
+        matched_entries = [
+            entry
+            for entry in prov_entries
+            if _value_token(normalize_value(entry.get("value"))) == row_token
+        ]
+        if not matched_entries:
+            continue
+
+        scores = [
+            _coerce_certainty_total_score(entry.get("certainty_total_score"))
+            for entry in matched_entries
+        ]
+        scores = [float(score) for score in scores if score is not None]
+        if not scores:
+            continue
+
+        images: List[str] = []
+        for entry in matched_entries:
+            image = str(entry.get("image") or "").strip()
+            if image and image not in images:
+                images.append(image)
+
+        proto = retriever.row_by_key.get(str(key))
+        out.append(
+            {
+                "key": str(key),
+                "value": norm_value,
+                "map_category": str(getattr(proto, "map_category", "") or "").strip(),
+                "assessment_cdm_type": str(getattr(proto, "assessment_cdm_type", "") or "").strip(),
+                "total_score": min(scores),
+                "best_total_score": max(scores),
+                "source_images": images,
+            }
+        )
+
+    out.sort(
+        key=lambda item: (
+            float(item.get("total_score") if item.get("total_score") is not None else 99.0),
+            str(item.get("key") or "").lower(),
+        )
+    )
+    selected = out[: max(0, int(limit))]
+    return [
+        item
+        for item in selected
+        if item.get("total_score") is not None and float(item.get("total_score")) < 8.0
+    ]
+
+
+def collect_conflict_review_entries(
+    row: Optional[Dict[str, Any]],
+    conflicts: Dict[str, List[Dict[str, Any]]],
+    conflict_resolution: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    if not conflicts:
+        return []
+
+    out: List[Dict[str, Any]] = []
+    for key in sorted(conflicts.keys()):
+        decision = conflict_resolution.get(key, {}) or {}
+        final_value = None
+        if isinstance(row, dict):
+            final_value = row.get(key)
+        if final_value is None:
+            final_value = decision.get("chosen_value")
+        aggregated = _aggregate_conflict_entries(list(conflicts.get(key) or []))
+        out.append(
+            {
+                "key": key,
+                "final_value": normalize_value(final_value),
+                "resolver_mode": str(decision.get("resolver_mode") or "unresolved"),
+                "candidates": aggregated,
+                "reason": str(decision.get("reason") or "").strip(),
+            }
+        )
+    return out
+
+
 def _format_markdown_list(items: Iterable[Any], empty_text: str = "(none)") -> str:
     vals = [str(x).strip() for x in items if str(x or "").strip()]
     if not vals:
@@ -6692,38 +6768,38 @@ def _aggregate_conflict_entries(entries: List[Dict[str, Any]]) -> List[Dict[str,
     for entry in entries:
         value = normalize_value(entry.get("value"))
         token = _value_token(value)
-        ctx = _normalize_input_context(entry.get("input_context"))
         slot = grouped.setdefault(
             token,
             {
                 "value": value,
                 "count": 0,
-                "questions": [],
                 "images": [],
-                "page_types": [],
-                "filled_bys": [],
+                "certainty_scores": [],
             },
         )
         slot["count"] += 1
 
-        question = str(ctx.get("question") or "").strip()
-        if question and question not in slot["questions"]:
-            slot["questions"].append(question)
-
         image = str(entry.get("image") or "").strip()
         if image and image not in slot["images"]:
             slot["images"].append(image)
+        score = _coerce_certainty_total_score(entry.get("certainty_total_score"))
+        if score is not None:
+            slot["certainty_scores"].append(float(score))
 
-        page_type = normalize_source_label(ctx.get("page_type"))
-        if page_type and page_type not in slot["page_types"]:
-            slot["page_types"].append(page_type)
+    rows = []
+    for row in grouped.values():
+        scores = list(row.pop("certainty_scores", []))
+        row["best_total_score"] = max(scores) if scores else None
+        row["avg_total_score"] = (sum(scores) / len(scores)) if scores else None
+        rows.append(row)
 
-        filled_by = _normalize_filled_by(ctx.get("filled_by"))
-        if filled_by and filled_by not in slot["filled_bys"]:
-            slot["filled_bys"].append(filled_by)
-
-    rows = list(grouped.values())
-    rows.sort(key=lambda row: (-int(row.get("count", 0) or 0), _value_sort_key(row.get("value"))))
+    rows.sort(
+        key=lambda row: (
+            -int(row.get("count", 0) or 0),
+            -float(row.get("best_total_score")) if row.get("best_total_score") is not None else float("inf"),
+            _value_sort_key(row.get("value")),
+        )
+    )
     return rows
 
 
@@ -6739,6 +6815,7 @@ def build_conflict_markdown_report(
         str(v.get("resolver_mode") or "unresolved")
         for v in (conflict_resolution or {}).values()
     )
+    unresolved_count = max(0, len(conflicts) - len(conflict_resolution or {}))
     lines: List[str] = [
         f"# Conflict Report: {patient_name}",
         "",
@@ -6746,8 +6823,8 @@ def build_conflict_markdown_report(
         "- Conflict definition: same `CDM_KEY` with more than one different normalized value.",
         f"- Conflict keys: `{len(conflicts)}`",
         f"- Resolved by code: `{mode_counts.get('code_majority', 0)}`",
-        f"- Resolved by LLM batch: `{mode_counts.get('llm_batch', 0)}`",
-        f"- Resolved by LLM single: `{mode_counts.get('llm_single', 0)}`",
+        f"- Resolved by certainty tie-break: `{mode_counts.get('code_certainty', 0)}`",
+        f"- Left unresolved: `{unresolved_count}`",
         f"- PHx OCR issues: `{len(phx_ocr_issues or [])}`",
         "",
     ]
@@ -6830,7 +6907,6 @@ def build_conflict_markdown_report(
             chosen_value = row.get(key)
         reason = str(decision.get("reason") or "").strip()
         resolver_mode = str(decision.get("resolver_mode") or "unresolved")
-        chosen_ctx = _normalize_input_context(decision.get("input_context"))
         aggregated = _aggregate_conflict_entries(entries)
 
         lines.extend(
@@ -6846,12 +6922,6 @@ def build_conflict_markdown_report(
             lines.append(f"- Chosen candidate index: `{chosen_idx}`")
         if chosen_image:
             lines.append(f"- Chosen source image: `{chosen_image}`")
-        if chosen_ctx.get("page_type"):
-            lines.append(f"- Chosen page type: `{chosen_ctx.get('page_type')}`")
-        if chosen_ctx.get("filled_by"):
-            lines.append(f"- Chosen source type: `{chosen_ctx.get('filled_by')}`")
-        if chosen_ctx.get("question"):
-            lines.append(f"- Chosen question/context: `{chosen_ctx.get('question')}`")
         if reason:
             lines.append(f"- Reason: {reason}")
 
@@ -6867,16 +6937,11 @@ def build_conflict_markdown_report(
             lines.append("")
             lines.append(f"- Value: `{_format_markdown_scalar(item.get('value'))}`")
             lines.append(f"- Count: `{int(item.get('count', 0) or 0)}`")
-            lines.append(f"- Filled by: {_format_markdown_list(item.get('filled_bys') or [])}")
-            lines.append(f"- Page types: {_format_markdown_list(item.get('page_types') or [])}")
+            if item.get("best_total_score") is not None:
+                lines.append(f"- Best total score: `{item.get('best_total_score')}`")
+            if item.get("avg_total_score") is not None:
+                lines.append(f"- Average total score: `{round(float(item.get('avg_total_score')), 3)}`")
             lines.append(f"- Source images: {_format_markdown_list(item.get('images') or [])}")
-            lines.append("- Questions / contexts:")
-            question_list = item.get("questions") or []
-            if question_list:
-                for q in question_list:
-                    lines.append(f"  - `{str(q).strip()}`")
-            else:
-                lines.append("  - (none)")
             lines.append("")
 
         lines.extend(
@@ -6886,15 +6951,13 @@ def build_conflict_markdown_report(
             ]
         )
         for entry_idx, entry in enumerate(entries):
-            ctx = _normalize_input_context(entry.get("input_context"))
             marker = " <- chosen" if chosen_idx is not None and entry_idx == chosen_idx else ""
             lines.append(f"#### Candidate {entry_idx}{marker}")
             lines.append("")
             lines.append(f"- Value: `{_format_markdown_scalar(entry.get('value'))}`")
             lines.append(f"- Image: `{str(entry.get('image') or '').strip()}`")
-            lines.append(f"- Filled by: {_format_markdown_scalar(ctx.get('filled_by'))}")
-            lines.append(f"- Page type: `{_format_markdown_scalar(ctx.get('page_type'))}`")
-            lines.append(f"- Question / context: `{_format_markdown_scalar(ctx.get('question'))}`")
+            if _coerce_certainty_total_score(entry.get("certainty_total_score")) is not None:
+                lines.append(f"- Total score: `{_coerce_certainty_total_score(entry.get('certainty_total_score'))}`")
             lines.append("")
 
     return "\n".join(lines).strip() + "\n"
@@ -6902,55 +6965,154 @@ def build_conflict_markdown_report(
 
 def build_patient_final_markdown_report(
     patient_name: str,
+    map_category_accuracy_entries: Optional[List[Dict[str, Any]]] = None,
+    conflict_entries: Optional[List[Dict[str, Any]]] = None,
+    low_certainty_entries: Optional[List[Dict[str, Any]]] = None,
     handwriting_entries: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    entries = list(handwriting_entries or [])
+    map_category_rows = None if map_category_accuracy_entries is None else list(map_category_accuracy_entries)
+    conflict_rows = list(conflict_entries or [])
+    certainty_rows = list(low_certainty_entries or [])
+    handwriting_rows = list(handwriting_entries or [])
     lines: List[str] = [
-        f"# Final Report: {patient_name}",
+        f"# Unified Review Report: {patient_name}",
         "",
         f"- Generated: `{now_str}`",
-        "",
-        "## Handwriting Fields",
-        "",
-        "Fields whose `assessment cdm type` is `handwriting` in `cdm_new.csv`.",
-        "",
     ]
-    if not entries:
+    if map_category_rows is not None:
         lines.extend(
             [
-                "No mapped handwriting fields.",
+                "",
+                "## Map Category Accuracy",
                 "",
             ]
         )
-        return "\n".join(lines).strip() + "\n"
+        if map_category_rows:
+            for item in map_category_rows:
+                total = int(item.get("total") or 0)
+                correct = int(item.get("correct") or 0)
+                accuracy = float(item.get("accuracy") or 0.0)
+                lines.append(
+                    f"- `{item.get('map_category')}`: `{correct}/{total}` (`{accuracy:.3f}`)"
+                )
+        else:
+            lines.append("- No mapped categories were available for evaluation.")
 
     lines.extend(
         [
-            "| CDM Key | Mapped Value | Source Images |",
-            "|---|---|---|",
+            "",
+            "## Conflicts",
+            "",
         ]
     )
-    for item in entries:
-        lines.append(
-            "| "
-            + f"{_markdown_cell(item.get('key'))} | "
-            + f"{_markdown_cell(item.get('value'))} | "
-            + f"{_markdown_cell(_format_markdown_list(item.get('source_images') or []))} |"
-        )
+    if conflict_rows:
+        for idx, item in enumerate(conflict_rows, start=1):
+            lines.append(f"{idx}. `{item.get('key')}`")
+            lines.append(f"Final value: `{_format_markdown_scalar(item.get('final_value'))}`")
+            lines.append(f"Resolver: `{item.get('resolver_mode')}`")
+            reason = str(item.get("reason") or "").strip()
+            if reason:
+                lines.append(f"Reason: {reason}")
+            candidates = list(item.get("candidates") or [])
+            if candidates:
+                candidate_bits = []
+                for candidate in candidates:
+                    bit = (
+                        f"`{_format_markdown_scalar(candidate.get('value'))}`"
+                        f" x{int(candidate.get('count', 0) or 0)}"
+                    )
+                    if candidate.get("best_total_score") is not None:
+                        bit += f", best score {candidate.get('best_total_score')}"
+                    candidate_bits.append(bit)
+                lines.append("Candidates: " + "; ".join(candidate_bits))
+            lines.append("")
+    else:
+        lines.append("No conflicts detected.")
+        lines.append("")
+
+    lines.extend(
+        [
+            "## Lowest Mapping Certainty",
+            "",
+        ]
+    )
+    if certainty_rows:
+        grouped_certainty: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for item in certainty_rows:
+            grouped_certainty[str(item.get("map_category") or "(none)").strip() or "(none)"].append(item)
+
+        for map_category in sorted(grouped_certainty.keys(), key=lambda s: s.lower()):
+            lines.append(f"### `{map_category}`")
+            lines.append("")
+            for idx, item in enumerate(grouped_certainty[map_category], start=1):
+                lines.append(f"{idx}. `{item.get('key')}`")
+                lines.append(f"Value: `{_format_markdown_scalar(item.get('value'))}`")
+                lines.append(f"Total score: `{item.get('total_score')}`")
+                assessment_type = str(item.get("assessment_cdm_type") or "").strip()
+                if assessment_type:
+                    lines.append(f"Assessment type: `{assessment_type}`")
+                lines.append(f"Source images: {_format_markdown_list(item.get('source_images') or [])}")
+                lines.append("")
+    else:
+        lines.append("No certainty-scored mapped fields were available.")
+        lines.append("")
+
+    lines.extend(
+        [
+            "## Handwriting Fields",
+            "",
+        ]
+    )
+    if handwriting_rows:
+        for idx, item in enumerate(handwriting_rows, start=1):
+            lines.append(f"{idx}. `{item.get('key')}`")
+            lines.append(f"Value: `{_format_markdown_scalar(item.get('value'))}`")
+            lines.append(f"Source images: {_format_markdown_list(item.get('source_images') or [])}")
+            lines.append("")
+    else:
+        lines.append("No mapped handwriting fields.")
+        lines.append("")
+
     lines.append("")
     return "\n".join(lines).strip() + "\n"
 
 
-def write_patient_outputs(output_dir: Path, patient_name: str, res: Dict[str, Any], output_columns: List[str]) -> None:
+def write_patient_outputs(
+    output_dir: Path,
+    patient_name: str,
+    res: Dict[str, Any],
+    output_columns: List[str],
+    retriever: "CDMRetriever",
+) -> None:
     # Per-patient CSV
     if res["row"] is not None:
         df_one = pd.DataFrame([res["row"]], columns=output_columns)
         df_one.to_csv(output_dir / f"{patient_name}.csv", index=False)
 
     (output_dir / "final_reports").mkdir(exist_ok=True)
+    evaluation = res.get("evaluation")
     final_report_md = build_patient_final_markdown_report(
         patient_name=patient_name,
+        map_category_accuracy_entries=(
+            collect_map_category_accuracy_entries(
+                evaluation=evaluation,
+                retriever=retriever,
+            )
+            if isinstance(evaluation, dict) and str(evaluation.get("evaluation_status") or "").strip().lower() == "completed"
+            else None
+        ),
+        conflict_entries=collect_conflict_review_entries(
+            row=res.get("row"),
+            conflicts=res.get("conflicts") or {},
+            conflict_resolution=res.get("conflict_resolution") or {},
+        ),
+        low_certainty_entries=collect_low_certainty_entries(
+            row=res.get("row"),
+            provenance=res.get("provenance") or {},
+            retriever=retriever,
+            limit=20,
+        ),
         handwriting_entries=res.get("handwriting_entries") or [],
     )
     (output_dir / "final_reports" / f"{patient_name}_final_report.md").write_text(
@@ -7152,14 +7314,13 @@ async def process_one_patient(
                 }
             )
             continue
-        raw_obj, valid_obj, valid_contexts, valid_cdm_contexts, rejected_fields = out
+        raw_obj, valid_obj, valid_cdm_contexts, rejected_fields = out
         page_results.append(
             PageResult(
                 image_name=bundle_name,
                 ocr_text=merged_text,
                 raw_json=raw_obj,
                 valid_json=valid_obj,
-                input_contexts=valid_contexts,
                 cdm_contexts=valid_cdm_contexts,
                 rejected_fields=rejected_fields,
             )
@@ -7531,7 +7692,6 @@ def process_patients_with_batch_api(
                             "ocr_text": bundle["ocr_text"],
                             "raw_json": {},
                             "valid_json": {},
-                            "input_contexts": {},
                             "cdm_contexts": {},
                             "rejected_fields": {},
                         }
@@ -7591,7 +7751,6 @@ def process_patients_with_batch_api(
                             route_name=str(meta.get("route_name") or DEFAULT_MAP_ROUTE),
                             stage_raw=stage["raw_json"],
                             stage_valid=stage["valid_json"],
-                            stage_contexts=stage["input_contexts"],
                             stage_cdm_contexts=stage["cdm_contexts"],
                             stage_rejected=stage["rejected_fields"],
                         )
@@ -7607,10 +7766,6 @@ def process_patients_with_batch_api(
                         )
                         for bk, bv in backfill_additions.items():
                             stage["valid_json"][bk] = bv
-                            stage["input_contexts"].setdefault(
-                                bk,
-                                {"filled_by": "", "question": "Derived from OCR header pattern", "page_type": ""},
-                            )
                             row = retriever.row_by_key.get(bk)
                             stage["cdm_contexts"].setdefault(
                                 bk,
@@ -7621,7 +7776,6 @@ def process_patients_with_batch_api(
                                 {
                                     "CDM_Context": stage["cdm_contexts"].get(bk, ""),
                                     "value": bv,
-                                    "input_context": stage["input_contexts"][bk],
                                 },
                             )
                         for bk, meta in backfill_rejected.items():
@@ -7643,7 +7797,6 @@ def process_patients_with_batch_api(
                                 ocr_text=str(stage["ocr_text"]),
                                 raw_json=stage["raw_json"],
                                 valid_json=stage["valid_json"],
-                                input_contexts=stage.get("input_contexts", {}),
                                 cdm_contexts=stage.get("cdm_contexts", {}),
                                 rejected_fields=stage["rejected_fields"],
                             )
@@ -7810,7 +7963,13 @@ async def run_pipeline(
         )
         for res in results:
             await _maybe_resolve_conflicts(res)
-            write_patient_outputs(output_dir=output_dir, patient_name=str(res["patient"]), res=res, output_columns=output_columns)
+            write_patient_outputs(
+                output_dir=output_dir,
+                patient_name=str(res["patient"]),
+                res=res,
+                output_columns=output_columns,
+                retriever=retriever,
+            )
     else:
         llm = resolver_llm if resolver_llm is not None else build_gemini()
 
@@ -7843,7 +8002,13 @@ async def run_pipeline(
             res = out
             results.append(res)
             await _maybe_resolve_conflicts(res)
-            write_patient_outputs(output_dir=output_dir, patient_name=pdir.name, res=res, output_columns=output_columns)
+            write_patient_outputs(
+                output_dir=output_dir,
+                patient_name=pdir.name,
+                res=res,
+                output_columns=output_columns,
+                retriever=retriever,
+            )
 
     # Combined CSV
     rows = [r["row"] for r in results if r.get("row") is not None]

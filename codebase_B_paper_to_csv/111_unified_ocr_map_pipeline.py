@@ -853,8 +853,8 @@ async def text_to_json(
 def build_map_schema_hint() -> str:
     return (
         '{"CDM_KEY": {"CDM_Context": "<cdm context>", "value": <value>, '
-        '"input_context": {"filled_by": "doctor|patient", '
-        '"question": "<exact question/context that matches to the CDM key>"}}}'
+        '"certainty": {"context_match": 0, "value_clarity": 0, '
+        '"evidence_strength": 0, "consistency": 0, "total_score": 0}}}'
     )
 
 
@@ -1598,14 +1598,12 @@ def apply_core_backfill_to_stage(
     ocr_text: str,
     stage_raw: Dict[str, Any],
     stage_valid: Dict[str, Any],
-    stage_contexts: Dict[str, Dict[str, str]],
     stage_cdm_contexts: Dict[str, str],
     stage_rejected: Dict[str, Dict[str, Any]],
 ) -> None:
     backfill_additions, backfill_rejected = pipeline_mod.apply_core_backfill(stage_valid, retriever, ocr_text)
     for key, value in backfill_additions.items():
         stage_valid[key] = value
-        stage_contexts.setdefault(key, {"filled_by": "", "question": "Derived from OCR header pattern", "page_type": ""})
         row = retriever.row_by_key.get(key)
         stage_cdm_contexts.setdefault(key, str(row.desc if row is not None else "").strip())
         stage_raw.setdefault(
@@ -1613,7 +1611,6 @@ def apply_core_backfill_to_stage(
             {
                 "CDM_Context": stage_cdm_contexts[key],
                 "value": value,
-                "input_context": stage_contexts[key],
             },
         )
     for key, meta in backfill_rejected.items():
@@ -1631,7 +1628,6 @@ async def map_ocr_text_for_category(
 ) -> Tuple[
     Dict[str, Any],
     Dict[str, Any],
-    Dict[str, Dict[str, str]],
     Dict[str, str],
     Dict[str, Dict[str, Any]],
     List[Any],
@@ -1639,7 +1635,6 @@ async def map_ocr_text_for_category(
 ]:
     stage_raw: Dict[str, Any] = {}
     stage_valid: Dict[str, Any] = {}
-    stage_contexts: Dict[str, Dict[str, str]] = {}
     stage_cdm_contexts: Dict[str, str] = {}
     stage_rejected: Dict[str, Dict[str, Any]] = {}
     normalized_category = pipeline_mod.normalize_map_category_name(map_category)
@@ -1664,7 +1659,6 @@ async def map_ocr_text_for_category(
         route_name=normalized_category,
         stage_raw=stage_raw,
         stage_valid=stage_valid,
-        stage_contexts=stage_contexts,
         stage_cdm_contexts=stage_cdm_contexts,
         stage_rejected=stage_rejected,
     )
@@ -1686,7 +1680,6 @@ async def map_ocr_text_for_category(
             route_name=normalized_category,
             stage_raw=stage_raw,
             stage_valid=stage_valid,
-            stage_contexts=stage_contexts,
             stage_cdm_contexts=stage_cdm_contexts,
             stage_rejected=stage_rejected,
         )
@@ -1697,11 +1690,10 @@ async def map_ocr_text_for_category(
         ocr_text=ocr_text,
         stage_raw=stage_raw,
         stage_valid=stage_valid,
-        stage_contexts=stage_contexts,
         stage_cdm_contexts=stage_cdm_contexts,
         stage_rejected=stage_rejected,
     )
-    return stage_raw, stage_valid, stage_contexts, stage_cdm_contexts, stage_rejected, owned_rows, candidate_meta
+    return stage_raw, stage_valid, stage_cdm_contexts, stage_rejected, owned_rows, candidate_meta
 
 
 async def map_ocr_text_single_agent(
@@ -1714,10 +1706,9 @@ async def map_ocr_text_single_agent(
     official_family: str,
     json_retry_attempts: int,
     enable_recall: bool,
-) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, str]], Dict[str, str], Dict[str, Dict[str, Any]]]:
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, str], Dict[str, Dict[str, Any]]]:
     stage_raw: Dict[str, Any] = {}
     stage_valid: Dict[str, Any] = {}
-    stage_contexts: Dict[str, Dict[str, str]] = {}
     stage_cdm_contexts: Dict[str, str] = {}
     stage_rejected: Dict[str, Dict[str, Any]] = {}
     route_name = str(route_name or pipeline_mod.DEFAULT_MAP_ROUTE)
@@ -1742,7 +1733,6 @@ async def map_ocr_text_single_agent(
             route_name=route_name,
             stage_raw=stage_raw,
             stage_valid=stage_valid,
-            stage_contexts=stage_contexts,
             stage_cdm_contexts=stage_cdm_contexts,
             stage_rejected=stage_rejected,
             official_questionnaire=official_questionnaire,
@@ -1768,7 +1758,6 @@ async def map_ocr_text_single_agent(
             route_name=route_name,
             stage_raw=stage_raw,
             stage_valid=stage_valid,
-            stage_contexts=stage_contexts,
             stage_cdm_contexts=stage_cdm_contexts,
             stage_rejected=stage_rejected,
             official_questionnaire=official_questionnaire,
@@ -1781,11 +1770,10 @@ async def map_ocr_text_single_agent(
         ocr_text=ocr_text,
         stage_raw=stage_raw,
         stage_valid=stage_valid,
-        stage_contexts=stage_contexts,
         stage_cdm_contexts=stage_cdm_contexts,
         stage_rejected=stage_rejected,
     )
-    return stage_raw, stage_valid, stage_contexts, stage_cdm_contexts, stage_rejected
+    return stage_raw, stage_valid, stage_cdm_contexts, stage_rejected
 
 
 def _resolve_agent_backends(
@@ -1839,7 +1827,6 @@ async def map_ocr_text_multi_agent(
 
     stage_raw: Dict[str, Any] = {}
     stage_valid: Dict[str, Any] = {}
-    stage_contexts: Dict[str, Dict[str, str]] = {}
     stage_cdm_contexts: Dict[str, str] = {}
     stage_rejected: Dict[str, Dict[str, Any]] = {}
     map_agents = pipeline_mod.build_map_agent_specs(
@@ -1883,7 +1870,6 @@ async def map_ocr_text_multi_agent(
             route_name=route_name,
             stage_raw=stage_raw,
             stage_valid=stage_valid,
-            stage_contexts=stage_contexts,
             stage_cdm_contexts=stage_cdm_contexts,
             stage_rejected=stage_rejected,
             official_questionnaire=official_questionnaire,
@@ -1921,7 +1907,6 @@ async def map_ocr_text_multi_agent(
                 route_name=route_name,
                 stage_raw=stage_raw,
                 stage_valid=stage_valid,
-                stage_contexts=stage_contexts,
                 stage_cdm_contexts=stage_cdm_contexts,
                 stage_rejected=stage_rejected,
                 official_questionnaire=official_questionnaire,
@@ -1934,11 +1919,10 @@ async def map_ocr_text_multi_agent(
         ocr_text=ocr_text,
         stage_raw=stage_raw,
         stage_valid=stage_valid,
-        stage_contexts=stage_contexts,
         stage_cdm_contexts=stage_cdm_contexts,
         stage_rejected=stage_rejected,
     )
-    return stage_raw, stage_valid, stage_contexts, stage_cdm_contexts, stage_rejected
+    return stage_raw, stage_valid, stage_cdm_contexts, stage_rejected
 
 
 async def resolve_single_conflict(
@@ -1979,7 +1963,7 @@ async def resolve_single_conflict(
 
 
 async def resolve_conflicts(
-    llm: TextAgent,
+    llm: Optional[TextAgent],
     pipeline_mod: Any,
     retriever: Any,
     patient_name: str,
@@ -1989,87 +1973,18 @@ async def resolve_conflicts(
     if not conflicts:
         return {}, {}
 
-    overrides: Dict[str, Any] = {}
-    decisions: Dict[str, Any] = {}
-    pending_conflicts: Dict[str, List[Dict[str, Any]]] = conflicts
-    if hasattr(pipeline_mod, "resolve_conflicts_by_majority_vote"):
-        try:
-            code_overrides, code_decisions, pending_conflicts, _ = pipeline_mod.resolve_conflicts_by_majority_vote(conflicts)
-            overrides.update(code_overrides)
-            decisions.update(code_decisions)
-        except Exception as exc:
-            logger.warning("Code majority conflict pre-resolver failed for %s: %s", patient_name, exc)
-            pending_conflicts = conflicts
-
-    if not pending_conflicts:
-        return overrides, decisions
-
-    user = pipeline_mod.build_conflict_resolver_user_prompt(
-        patient_name=patient_name,
-        retriever=retriever,
-        conflicts=pending_conflicts,
-    )
     try:
-        raw = await text_to_json(
-            llm=llm,
-            system_prompt=pipeline_mod.CONFLICT_RESOLVER_SYSTEM,
-            user_text=user,
-            pipeline_mod=pipeline_mod,
-            schema_hint='{"resolved":{"CDM_KEY":{"chosen_index": <int>, "reason": "<brief reason>"}}}',
-            max_attempts=json_retry_attempts,
-            label="conflict_resolver",
+        overrides, decisions, pending_conflicts, _ = pipeline_mod.resolve_conflicts_by_majority_vote(conflicts)
+    except Exception as exc:
+        logger.warning("Deterministic conflict resolver failed for %s: %s", patient_name, exc)
+        return {}, {}
+
+    if pending_conflicts:
+        logger.info(
+            "Leaving %d conflict keys unresolved for %s after deterministic conflict resolution",
+            len(pending_conflicts),
+            patient_name,
         )
-        resolved_obj = raw.get("resolved", raw)
-    except Exception:
-        resolved_obj = None
-
-    if isinstance(resolved_obj, dict):
-        for key, entries in pending_conflicts.items():
-            item = resolved_obj.get(key)
-            if not isinstance(item, dict):
-                continue
-            idx = pipeline_mod._coerce_int(item.get("chosen_index"))
-            if idx is None or idx < 0 or idx >= len(entries):
-                continue
-            chosen = entries[idx]
-            overrides[key] = chosen.get("value")
-            decisions[key] = {
-                "chosen_index": idx,
-                "chosen_value": chosen.get("value"),
-                "reason": str(item.get("reason", "")).strip(),
-                "source_image": chosen.get("image"),
-                "input_context": pipeline_mod._normalize_input_context(chosen.get("input_context")),
-                "resolver_mode": "llm_batch",
-            }
-
-    pending = [key for key in pending_conflicts.keys() if key not in overrides]
-    for key in pending:
-        try:
-            resolved = await resolve_single_conflict(
-                llm=llm,
-                pipeline_mod=pipeline_mod,
-                retriever=retriever,
-                patient_name=patient_name,
-                key=key,
-                entries=pending_conflicts[key],
-                json_retry_attempts=json_retry_attempts,
-            )
-        except Exception as exc:
-            logger.warning("Per-key conflict resolver failed for %s/%s: %s", patient_name, key, exc)
-            continue
-        if resolved is None:
-            continue
-        idx, reason = resolved
-        chosen = pending_conflicts[key][idx]
-        overrides[key] = chosen.get("value")
-        decisions[key] = {
-            "chosen_index": idx,
-            "chosen_value": chosen.get("value"),
-            "reason": reason,
-            "source_image": chosen.get("image"),
-            "input_context": pipeline_mod._normalize_input_context(chosen.get("input_context")),
-            "resolver_mode": "llm_single",
-        }
     return overrides, decisions
 
 
@@ -2591,11 +2506,7 @@ async def run(args: argparse.Namespace) -> None:
         if category_split_model_id in map_backend_kind_by_model
         else resolve_text_backend_name(category_split_model_id)
     )
-    resolver_backend_kind = (
-        "shared_map_backend"
-        if resolver_model_id in map_backend_kind_by_model
-        else resolve_text_backend_name(resolver_model_id)
-    )
+    resolver_backend_kind = "deterministic_conflict_rules"
     plan = {
         "patient_name": patient_name,
         "patient_dir": str(patient_dir) if patient_dir is not None else "",
@@ -2616,8 +2527,9 @@ async def run(args: argparse.Namespace) -> None:
         "map_agent_backend_by_model": map_backend_kind_by_model,
         "resolver_model_id": resolver_model_id,
         "resolver_backend": resolver_backend_kind,
+        "conflict_resolver_mode": "deterministic_majority_then_certainty",
         "enable_recall": bool(args.enable_recall),
-        "disable_conflict_resolver": bool(args.disable_conflict_resolver or args.pipeline_mode != "ocr_map_resolve"),
+        "disable_conflict_resolver": False,
         "map_json_retry_attempts": max(1, int(args.map_json_retry_attempts)),
         "resolver_json_retry_attempts": max(1, int(args.resolver_json_retry_attempts)),
         "images_total": len(images),
@@ -2685,33 +2597,7 @@ async def run(args: argparse.Namespace) -> None:
         if args.preload_map_model:
             await maybe_warm_backend(category_split_backend)
 
-    conflict_backend: Optional[TextAgent]
-    if args.disable_conflict_resolver or args.pipeline_mode != "ocr_map_resolve":
-        conflict_backend = None
-    elif resolver_model_id in map_backends_by_model:
-        conflict_backend = map_backends_by_model[resolver_model_id]
-    elif resolver_model_id == category_split_model_id:
-        conflict_backend = category_split_backend
-    else:
-        conflict_backend = build_text_backend(
-            model_id=resolver_model_id,
-            max_new_tokens=args.resolver_max_new_tokens,
-            temperature=args.resolver_temperature,
-            top_p=args.resolver_top_p,
-            max_inflight=args.map_concurrency,
-            timeout_sec=args.request_timeout_sec,
-            max_retries=args.max_retries,
-            openai_api_key_env=args.openai_api_key_env,
-            gemini_api_key_env=args.gemini_api_key_env,
-            dtype=args.dtype,
-            attn_implementation=args.attn_implementation,
-            disable_trust_remote_code=args.disable_trust_remote_code,
-            rate_limit_overrides=args.rate_limit_overrides,
-            rate_limit_window_sec=args.rate_limit_window_sec,
-            rate_limit_margin=args.rate_limit_margin,
-        )
-        if args.preload_map_model:
-            await maybe_warm_backend(conflict_backend)
+    conflict_backend: Optional[TextAgent] = None
 
     retriever = pipeline_mod.CDMRetriever(cdm_csv)
     output_columns = list(pd.read_csv(example_csv, nrows=0).columns)
@@ -2956,7 +2842,6 @@ async def run(args: argparse.Namespace) -> None:
                 (
                     raw_obj,
                     valid_obj,
-                    valid_contexts,
                     valid_cdm_contexts,
                     rejected_fields,
                     owned_rows,
@@ -2976,7 +2861,6 @@ async def run(args: argparse.Namespace) -> None:
                         ocr_text=merged_text,
                         raw_json=raw_obj,
                         valid_json=valid_obj,
-                        input_contexts=valid_contexts,
                         cdm_contexts=valid_cdm_contexts,
                         rejected_fields=rejected_fields,
                     )
@@ -2993,7 +2877,6 @@ async def run(args: argparse.Namespace) -> None:
                             "mapped": row.key in valid_obj,
                             "value": valid_obj.get(row.key, ""),
                             "CDM_Context": valid_cdm_contexts.get(row.key, str(getattr(row, "desc", "") or "").strip()),
-                            "input_context": valid_contexts.get(row.key, {}) if row.key in valid_obj else {},
                         }
                         for row in owned_rows
                     ],
@@ -3011,7 +2894,6 @@ async def run(args: argparse.Namespace) -> None:
                         {
                             k: {
                                 "CDM_Context": valid_cdm_contexts.get(k, ""),
-                                "input_context": valid_contexts.get(k, {}),
                             }
                             for k in valid_obj.keys()
                         },
@@ -3083,7 +2965,7 @@ async def run(args: argparse.Namespace) -> None:
     )
     patient_res["phx_ocr_issues"] = phx_ocr_issues
 
-    if conflict_backend is not None and patient_res.get("row") is not None and patient_res.get("conflicts"):
+    if patient_res.get("row") is not None and patient_res.get("conflicts"):
         overrides, decisions = await resolve_conflicts(
             llm=conflict_backend,
             pipeline_mod=pipeline_mod,
@@ -3112,14 +2994,6 @@ async def run(args: argparse.Namespace) -> None:
             len(overrides),
         )
 
-    pipeline_mod.write_patient_outputs(
-        output_dir=output_dir,
-        patient_name=patient_name,
-        res=patient_res,
-        output_columns=output_columns,
-    )
-    refresh_combined_patient_csv(output_dir=output_dir, output_columns=output_columns)
-
     evaluation = evaluate_against_reference(
         output_dir=output_dir,
         patient_name=patient_name,
@@ -3128,6 +3002,16 @@ async def run(args: argparse.Namespace) -> None:
         reference_name=str(args.eval_reference_name or "").strip(),
         reference_index=int(args.eval_reference_index),
     )
+    patient_res["evaluation"] = evaluation
+
+    pipeline_mod.write_patient_outputs(
+        output_dir=output_dir,
+        patient_name=patient_name,
+        res=patient_res,
+        output_columns=output_columns,
+        retriever=retriever,
+    )
+    refresh_combined_patient_csv(output_dir=output_dir, output_columns=output_columns)
 
     ocr_usage_summary = summarize_openai_usage(ocr_backend) if ocr_backend is not None else {}
     category_split_usage_summary = summarize_openai_usage(category_split_backend)
