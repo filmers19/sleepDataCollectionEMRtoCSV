@@ -3099,6 +3099,12 @@ async def run(args: argparse.Namespace) -> None:
                     merged_like[key] = value
             patient_res["merged"] = merged_like
             patient_res["row"] = pipeline_mod.build_output_row(merged_like, output_columns)
+        patient_res["handwriting_entries"] = pipeline_mod.collect_assessment_type_entries(
+            row=patient_res.get("row"),
+            provenance=patient_res.get("provenance") or {},
+            retriever=retriever,
+            assessment_cdm_type="handwriting",
+        )
         patient_res["conflict_resolution"] = decisions
         logger.info(
             "Conflict resolution complete: conflict_keys=%d overrides=%d",

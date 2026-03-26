@@ -2901,6 +2901,10 @@ def build_category_specific_map_rules(map_category: str, ocr_text: str) -> str:
                 "  - Q12 has no `mq` CDM key in the current schema. Do not force-map Q12 into another `PSG_M_*` key.",
                 "- For Q9, treat the five subitems `ㄱ, ㄴ, ㄷ, ㄹ, ㅁ` as five required separate outputs. Do not collapse them into one summary.",
                 "- For Q2 and Q4, parse hours and minutes separately. If only one part is visible, fill the visible part and leave the missing part blank rather than guessing.",
+                "- For `HH:MM`-style answers, if the HH slot is clearly blank, do not map HH. Example: `____시간 10분` -> `MM=10` and leave HH blank.",
+                "- For `HH:MM`-style answers, if the MM slot is clearly blank, do not map MM. Example: `1시간 ____분` -> `HH=1` and leave MM blank.",
+                "- For `HH:MM`-style answers, if HH is written as `a~b`, convert it to the midpoint in total minutes, then split back into HH/MM. Example: `1~2시간 ____분` -> `HH=1`, `MM=30`.",
+                "- For `HH:MM`-style answers, if MM is written as `a~b`, map the median minute to MM. Example: `1시간 10~20분` -> `HH=1`, `MM=15`.",
                 "- For Q8 and Q10 dream description, copy the directly written free-text content only when it is explicitly present. If the field is blank or marked as no dream, leave the text key blank.",
                 "- If the patient name is written in Korean, output the Korean name in Korean. If written in English, output the English name in English. Do not romanize Korean names, and do not translate English names into Korean.",
             ]
@@ -2968,6 +2972,14 @@ def build_category_specific_map_rules(map_category: str, ocr_text: str) -> str:
                 "- For N_Sleepattack, require the exact sleep-attack meaning: the patient tried to stay awake in a situation where falling asleep was not allowed or appropriate, but still unintentionally fell asleep. Do not map N_Sleepattack from generic daytime sleepiness wording such as `잠에 들려고 하지 않으려 할 때 잠이 옵니까?` or other broad sleepiness questions.",
             ]
         )
+    elif category == MAP_CATEGORY_RLS:
+        rules.extend(
+            [
+                "- This is the `rls` category.",
+                "- Focus on official restless-legs / IRLS questionnaire items only.",
+                "- One-shot example: if one answered question says `이러한 느낌이 주로 가만히 있을 때 일어나고 움직임에 의해 좋아지나요?`, map that same answer to BOTH `RLS_02_rest` and `RLS_03_move`.",
+            ]
+        )
     elif category == MAP_CATEGORY_PSQI:
         rules.extend(
             [
@@ -2977,6 +2989,10 @@ def build_category_specific_map_rules(map_category: str, ocr_text: str) -> str:
                 "- Find the OFFICIAL PSQI questions, not similar questions.",
                 "- If OCR text explicitly contains even single `주중`/`주말` (or weekday/weekend wording), map to ONLY `_week` / `_free` keys for PSQI 01-04.",
                 "- If OCR text does not contain `주중`/`주말` (or weekday/weekend wording), map to ONLY non-week/free keys (`..._HH`, `..._MM`) for PSQI 01-04.",
+                "- For `HH:MM`-style answers, if the HH slot is clearly blank, do not map HH. Example: `____시간 10분` -> `MM=10` and leave HH blank.",
+                "- For `HH:MM`-style answers, if the MM slot is clearly blank, do not map MM. Example: `1시간 ____분` -> `HH=1` and leave MM blank.",
+                "- For `HH:MM`-style answers, if HH is written as `a~b`, convert it to the midpoint in total minutes, then split back into HH/MM. Example: `1~2시간 ____분` -> `HH=1`, `MM=30`.",
+                "- For `HH:MM`-style answers, if MM is written as `a~b`, map the median minute to MM. Example: `1시간 10~20분` -> `HH=1`, `MM=15`.",
             ]
         )
     else:
@@ -4439,6 +4455,7 @@ class CDMRow:
     type_label: str = "B"
     semantic_allowed: int = 1
     map_category: str = ""
+    assessment_cdm_type: str = ""
 
 
 @dataclass
@@ -4521,6 +4538,7 @@ class CDMRetriever:
             if type_label not in {"A", "B"}:
                 type_label = "B"
             map_category = normalize_map_category_name(r.get("map category", ""))
+            assessment_cdm_type = str(r.get("assessment cdm type", "") or "").strip()
 
             row = CDMRow(
                 key=key,
@@ -4530,6 +4548,7 @@ class CDMRetriever:
                 type_label=type_label,
                 semantic_allowed=int(semantic_allowed),
                 map_category=map_category,
+                assessment_cdm_type=assessment_cdm_type,
             )
             self.rows.append(row)
 
@@ -6498,6 +6517,7 @@ def build_patient_result(
             "validation_rejections": {},
             "page_errors": page_errors,
             "conflict_resolution": {},
+            "handwriting_entries": [],
         }
 
     if save_intermediate:
@@ -6542,6 +6562,12 @@ def build_patient_result(
     if inferred_psg_type:
         merged["PSG_Type"] = inferred_psg_type
     row = build_output_row(merged, output_columns)
+    handwriting_entries = collect_assessment_type_entries(
+        row=row,
+        provenance=provenance,
+        retriever=retriever,
+        assessment_cdm_type="handwriting",
+    )
     validation_rejections = {pr.image_name: pr.rejected_fields for pr in page_results if pr.rejected_fields}
     total_valid_keys = sum(len(pr.valid_json) for pr in page_results)
     total_rejected_keys = sum(len(pr.rejected_fields) for pr in page_results)
@@ -6581,6 +6607,7 @@ def build_patient_result(
         "validation_rejections": validation_rejections,
         "page_errors": page_errors,
         "conflict_resolution": {},
+        "handwriting_entries": handwriting_entries,
     }
 
 
@@ -6608,6 +6635,50 @@ def _value_sort_key(v: Any) -> Tuple[int, str]:
     if isinstance(nv, (int, float)) and not isinstance(nv, bool):
         return (0, f"{float(nv):020.6f}")
     return (1, str(nv))
+
+
+def collect_assessment_type_entries(
+    row: Optional[Dict[str, Any]],
+    provenance: Dict[str, List[Dict[str, Any]]],
+    retriever: "CDMRetriever",
+    assessment_cdm_type: str,
+) -> List[Dict[str, Any]]:
+    target = str(assessment_cdm_type or "").strip().lower()
+    if not target or not isinstance(row, dict):
+        return []
+
+    out: List[Dict[str, Any]] = []
+    for proto in retriever.rows:
+        if str(getattr(proto, "assessment_cdm_type", "") or "").strip().lower() != target:
+            continue
+        key = str(getattr(proto, "key", "") or "").strip()
+        if not key:
+            continue
+        value = normalize_value(row.get(key))
+        if value is None:
+            continue
+
+        row_token = _value_token(value)
+        prov_entries = list(provenance.get(key) or [])
+        matched_images: List[str] = []
+        fallback_images: List[str] = []
+        for entry in prov_entries:
+            image = str(entry.get("image") or "").strip()
+            if not image:
+                continue
+            if image not in fallback_images:
+                fallback_images.append(image)
+            if _value_token(normalize_value(entry.get("value"))) == row_token and image not in matched_images:
+                matched_images.append(image)
+        out.append(
+            {
+                "key": key,
+                "value": value,
+                "map_category": str(getattr(proto, "map_category", "") or "").strip(),
+                "source_images": matched_images or fallback_images,
+            }
+        )
+    return out
 
 
 def _format_markdown_list(items: Iterable[Any], empty_text: str = "(none)") -> str:
@@ -6830,11 +6901,63 @@ def build_conflict_markdown_report(
     return "\n".join(lines).strip() + "\n"
 
 
+def build_patient_final_markdown_report(
+    patient_name: str,
+    handwriting_entries: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    entries = list(handwriting_entries or [])
+    lines: List[str] = [
+        f"# Final Report: {patient_name}",
+        "",
+        f"- Generated: `{now_str}`",
+        "",
+        "## Handwriting Fields",
+        "",
+        "Fields whose `assessment cdm type` is `handwriting` in `cdm_new.csv`.",
+        "",
+    ]
+    if not entries:
+        lines.extend(
+            [
+                "No mapped handwriting fields.",
+                "",
+            ]
+        )
+        return "\n".join(lines).strip() + "\n"
+
+    lines.extend(
+        [
+            "| CDM Key | Mapped Value | Source Images |",
+            "|---|---|---|",
+        ]
+    )
+    for item in entries:
+        lines.append(
+            "| "
+            + f"{_markdown_cell(item.get('key'))} | "
+            + f"{_markdown_cell(item.get('value'))} | "
+            + f"{_markdown_cell(_format_markdown_list(item.get('source_images') or []))} |"
+        )
+    lines.append("")
+    return "\n".join(lines).strip() + "\n"
+
+
 def write_patient_outputs(output_dir: Path, patient_name: str, res: Dict[str, Any], output_columns: List[str]) -> None:
     # Per-patient CSV
     if res["row"] is not None:
         df_one = pd.DataFrame([res["row"]], columns=output_columns)
         df_one.to_csv(output_dir / f"{patient_name}.csv", index=False)
+
+    (output_dir / "final_reports").mkdir(exist_ok=True)
+    final_report_md = build_patient_final_markdown_report(
+        patient_name=patient_name,
+        handwriting_entries=res.get("handwriting_entries") or [],
+    )
+    (output_dir / "final_reports" / f"{patient_name}_final_report.md").write_text(
+        final_report_md,
+        encoding="utf-8",
+    )
 
     # Conflicts report
     if res["conflicts"]:
@@ -7634,6 +7757,12 @@ async def run_pipeline(
                         merged_like[k] = v
                 res["merged"] = merged_like
                 res["row"] = build_output_row(merged_like, output_columns)
+            res["handwriting_entries"] = collect_assessment_type_entries(
+                row=res.get("row"),
+                provenance=res.get("provenance") or {},
+                retriever=retriever,
+                assessment_cdm_type="handwriting",
+            )
             res["conflict_resolution"] = decisions
             logger.info(
                 "Patient %s conflict resolution: conflict_keys=%d overrides=%d",
