@@ -2870,6 +2870,8 @@ def build_category_specific_map_rules(map_category: str, ocr_text: str) -> str:
                 "- Do not output multiple values for the same `basic` key. Choose one final best value after applying the majority-vote rule.",
                 "- Normalize occupation to Korean wording when possible. If CDM options exist for the occupation, map to the correct option code.",
                 "- If OCR answer indicates job-seeking/leave or jobless (e.g., 취준, 취업준비, 휴직, 무직, X), omit Occupation.",
+                "- If height or weight is written with explicit imperial units such as inches (`in`, `inch`, `\"`) or pounds (`lb`, `lbs`, `pound`), you may convert them to `Height_cm` / `Weight_kg` using the standard unit conversion.",
+                "- Only convert height/weight units when the OCR text explicitly shows those units. Do not guess or invent a conversion when the unit is missing or ambiguous.",
                 "- Shiftwork must come only from the dedicated shift-work question/field such as `교대 근무` or a clearly equivalent direct header field.",
                 "- If the shift-work field is blank, unanswered, missing, or unreadable, leave `Shiftwork` blank.",
                 "- Do not output `0` for `Shiftwork` just because there is no relevant selected mark, checked mark, or answered content.",
@@ -3549,22 +3551,19 @@ def _clean_basic_occupation(raw: str) -> Optional[str]:
     s = str(raw or "").strip()
     if not s:
         return None
-    s = re.split(r"\b(?:결혼|근무시간|교대\s*근무|주증상|주소|전화번호|휴대폰)\b", s, maxsplit=1)[0]
+    s = re.split(
+        r"\b(?:결혼|marriage|근무시간|duty\s*time|교대\s*근무|shift\s*work|주증상|주소|전화번호|휴대폰|address|cell\s*phone)\b",
+        s,
+        maxsplit=1,
+        flags=re.I,
+    )[0]
     s = s.strip(" ,;:-")
     s = re.sub(r"\s{2,}", " ", s)
     s = re.sub(r"^(?:없음|none)\s+(?=[0-9A-Za-z가-힣])", "", s, flags=re.I).strip()
     if not s or re.fullmatch(r"[_\-\s□]+", s):
         return None
-    if re.search(r"(?:취준|취업준비|휴직|무직|^x$|^없음$)", s, re.I):
+    if re.search(r"(?:취준|취업|휴직|무직|무|^x$|^없음$)", s, re.I):
         return None
-    occupation_map = {
-        "us military": "군인",
-        "military": "군인",
-        "housewife": "주부",
-    }
-    mapped = occupation_map.get(s.lower())
-    if mapped:
-        return mapped
     return s
 
 
@@ -3715,11 +3714,8 @@ def collect_basic_text_evidence(
                     continue
                 norm, reason = validate_value_with_cdm(row, value)
                 if norm is None:
-                    if key == "Shiftwork" and str(value).strip():
-                        norm = 1 if str(value).strip().lower() in {"yes", "예"} else 0
-                    else:
-                        logger.debug("Skipping basic evidence %s=%r from %s (%s)", key, value, pr.image_name, reason)
-                        continue
+                    logger.debug("Skipping basic evidence %s=%r from %s (%s)", key, value, pr.image_name, reason)
+                    continue
                 evidence[key].append(
                     {
                         "image": pr.image_name,
@@ -3910,7 +3906,23 @@ def infer_psg_type_from_page_results(
     for pr in page_results:
         category = _page_result_category_name(pr.image_name)
         txt = str(pr.ocr_text or "")
-        if category == MAP_CATEGORY_CPAP and _collect_cpap_dynamic_candidate_metadata(txt).get("is_cpap_report"):
+        cpap_meta = _collect_cpap_dynamic_candidate_metadata(txt)
+        cpap_report_detected = bool(cpap_meta.get("cpap_report_detected"))
+        strong_cpap_cues = bool(
+            re.search(
+                r"full\s+night\s+cpap\s+polysomnography|nasal\s+cpap\s+titration|"
+                r"optimal\s+cpap\s+pressure|this\s+polysomnogram\s+was\s+a\s+full\s+night\s+cpap\s+titration",
+                txt,
+                re.I,
+            )
+        )
+        if category == MAP_CATEGORY_CPAP and (
+            cpap_report_detected
+            or strong_cpap_cues
+            or bool(cpap_meta.get("notes", {}).get("optimal_steps"))
+            or bool(cpap_meta.get("notes", {}).get("recommended_steps"))
+            or bool(cpap_meta.get("evidence", {}).get("row_lines"))
+        ):
             return "C"
         if re.search(r"\bmslt\b|multiple sleep latency", txt, re.I):
             return "M"
@@ -3934,6 +3946,49 @@ def synthesize_database_id(row: Dict[str, Any]) -> Optional[str]:
     if not (a and b and c):
         return None
     return f"001_{a}_{b}_{c}"
+
+
+def _coerce_float_scalar(value: Any) -> Optional[float]:
+    nv = normalize_value(value)
+    if nv is None:
+        return None
+    if isinstance(nv, (int, float)) and not isinstance(nv, bool):
+        try:
+            return float(nv)
+        except (TypeError, ValueError):
+            return None
+    s = str(nv).strip().replace(",", "")
+    if not re.fullmatch(r"[+-]?\d+(?:\.\d+)?", s):
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def apply_bmi_consistency_rule(row: Dict[str, Any]) -> None:
+    """
+    If mapped BMI disagrees materially with BMI recalculated from the final
+    mapped height/weight, trust the recalculated value.
+    """
+    if not {"Height_cm", "Weight_kg", "BMI"}.issubset(row.keys()):
+        return
+
+    height_cm = _coerce_float_scalar(row.get("Height_cm"))
+    weight_kg = _coerce_float_scalar(row.get("Weight_kg"))
+    mapped_bmi = _coerce_float_scalar(row.get("BMI"))
+    if height_cm is None or weight_kg is None or mapped_bmi is None:
+        return
+    if height_cm <= 0 or weight_kg <= 0:
+        return
+
+    height_m = height_cm / 100.0
+    if height_m <= 0:
+        return
+
+    recalculated_bmi = round(weight_kg / (height_m * height_m), 1)
+    if abs(recalculated_bmi - mapped_bmi) > 1.0:
+        row["BMI"] = _normalize_numeric_value(recalculated_bmi)
 
 
 PSQI_BASE_GROUPS = [
@@ -6392,6 +6447,7 @@ def build_output_row(merged: Dict[str, Any], output_columns: List[str]) -> Dict[
     apply_morning_questionnaire_time_rules(row)
     apply_phx_default_rules(row)
     _apply_cpap_output_rules(row)
+    apply_bmi_consistency_rule(row)
 
     if "Diagnosis_etc" in row:
         row["Diagnosis_etc"] = normalize_diagnosis_etc_value(row.get("Diagnosis_etc"))
