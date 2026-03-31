@@ -26,7 +26,6 @@ example*.csv
 patient10_*
 
 # Repo cleanup: keep only core pipelines and selected root scripts tracked.
-README.md
 category_pipeline_*.md
 cpap_psg_support_plan_*.md
 compare_ocr_models.sh
