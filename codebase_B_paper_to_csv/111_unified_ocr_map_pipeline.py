@@ -2270,11 +2270,13 @@ def evaluate_against_reference(
     output_dir: Path,
     patient_name: str,
     row: Dict[str, Any],
-    example_csv: Path,
+    example_csv: Optional[Path],
     reference_name: str,
     reference_index: int,
 ) -> Optional[Dict[str, Any]]:
     if not row:
+        return None
+    if example_csv is None or not Path(example_csv).exists():
         return None
     if not reference_name and reference_index <= 0:
         return None
@@ -2466,11 +2468,11 @@ async def run(args: argparse.Namespace) -> None:
 
     patient_name, images, duplicates, patient_dir = resolve_input_images(args, pipeline_mod)
     cdm_csv = resolve_repo_path(args.cdm_csv)
-    example_csv = resolve_repo_path(args.example_csv)
+    example_csv = resolve_repo_path(args.example_csv) if str(args.example_csv).strip() else None
     reuse_ocr_dir = resolve_repo_path(args.reuse_ocr_dir) if args.reuse_ocr_dir else None
     if not cdm_csv.exists():
         raise FileNotFoundError(f"CDM CSV not found: {cdm_csv}")
-    if not example_csv.exists():
+    if example_csv is not None and not example_csv.exists():
         raise FileNotFoundError(f"example.csv not found: {example_csv}")
     if reuse_ocr_dir is not None and not reuse_ocr_dir.exists():
         raise FileNotFoundError(f"reuse OCR dir not found: {reuse_ocr_dir}")
@@ -2600,7 +2602,7 @@ async def run(args: argparse.Namespace) -> None:
     conflict_backend: Optional[TextAgent] = None
 
     retriever = pipeline_mod.CDMRetriever(cdm_csv)
-    output_columns = list(pd.read_csv(example_csv, nrows=0).columns)
+    output_columns = pipeline_mod.get_output_columns(example_csv) if hasattr(pipeline_mod, "get_output_columns") else list(pd.read_csv(example_csv, nrows=0).columns)
 
     started = time.perf_counter()
     ocr_pairs: List[Tuple[Path, str]] = []
@@ -3088,7 +3090,12 @@ def parse_args() -> argparse.Namespace:
 
     ap.add_argument("--output_dir", type=str, required=True)
     ap.add_argument("--cdm_csv", type=str, default="cdm_new.csv")
-    ap.add_argument("--example_csv", type=str, default="example.csv")
+    ap.add_argument(
+        "--example_csv",
+        type=str,
+        default="",
+        help="Optional example.csv path. Needed only for labeled evaluation; output columns can come from the internal schema.",
+    )
     ap.add_argument("--pipeline_mode", type=str, default="ocr_map_resolve", choices=["ocr_only", "ocr_map", "ocr_map_resolve"])
 
     ap.add_argument("--ocr_model_id", type=str, default="gpt-5.4")

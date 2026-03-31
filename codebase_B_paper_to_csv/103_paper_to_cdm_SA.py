@@ -36,6 +36,7 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 # by the split-agent count when building agent specs.
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
+OUTPUT_SCHEMA_JSON = SCRIPT_DIR / "output_schema_columns.json"
 CPAP_PRESSURE_STEP_START = 5
 CPAP_PRESSURE_STEP_END = 29
 
@@ -212,6 +213,33 @@ DOCUMENT_LABEL_SPECS: Dict[str, Dict[str, Any]] = {
         "extra_keys": (),
     },
 }
+
+
+_OUTPUT_COLUMNS_CACHE: Optional[List[str]] = None
+
+
+def get_output_columns(example_csv: Optional[Path] = None) -> List[str]:
+    """
+    Preferred source is a header-only example CSV when provided.
+    Otherwise fall back to the checked-in schema-only column list so the
+    pipeline does not depend on patient data.
+    """
+    if example_csv is not None:
+        try:
+            path = Path(example_csv)
+            if path.exists():
+                return list(pd.read_csv(path, nrows=0).columns)
+            logger.warning("example_csv not found at %s. Falling back to internal schema.", path)
+        except Exception as exc:
+            logger.warning("Could not load example_csv header from %s (%s). Falling back to internal schema.", example_csv, exc)
+
+    global _OUTPUT_COLUMNS_CACHE
+    if _OUTPUT_COLUMNS_CACHE is None:
+        payload = json.loads(OUTPUT_SCHEMA_JSON.read_text(encoding="utf-8"))
+        if not isinstance(payload, list) or not all(isinstance(x, str) for x in payload):
+            raise ValueError(f"Invalid output schema JSON: {OUTPUT_SCHEMA_JSON}")
+        _OUTPUT_COLUMNS_CACHE = list(payload)
+    return list(_OUTPUT_COLUMNS_CACHE)
 
 MAP_ROUTE_PSG_SIGNALS = "map_route_polysomnography_signals"
 MAP_ROUTE_PSG_REPORT_GENERAL = "map_route_psg_report_general"
@@ -7827,7 +7855,7 @@ def process_patients_with_batch_api(
 async def run_pipeline(
     input_root: Path,
     cdm_csv: Path,
-    example_csv: Path,
+    example_csv: Optional[Path],
     output_dir: Path,
     use_batch_api: bool,
     batch_model: str,
@@ -7853,9 +7881,7 @@ async def run_pipeline(
     REQUEST_THROTTLE.configure(request_delay_sec)
     t_run0 = time.perf_counter()
 
-    # Column order: match example.csv exactly
-    example_df = pd.read_csv(example_csv)
-    output_columns = list(example_df.columns)
+    output_columns = get_output_columns(example_csv)
 
     patient_dirs = iter_patient_folders(input_root)
     logger.info("Found %d patient folders", len(patient_dirs))
@@ -8044,7 +8070,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input_root", type=str, required=True, help="Root directory containing one folder per patient")
     ap.add_argument("--cdm_csv", type=str, required=True, help="Path to CDM definition CSV (e.g., cdm_new.csv)")
-    ap.add_argument("--example_csv", type=str, required=True, help="Path to example.csv (column order template)")
+    ap.add_argument(
+        "--example_csv",
+        type=str,
+        default="",
+        help="Optional example.csv path. When omitted, uses the internal schema-only column order.",
+    )
     ap.add_argument("--output_dir", type=str, required=True, help="Output directory for CSV files")
     ap.add_argument("--use_batch_api", action="store_true", help="Use Gemini Batch API (two batch jobs: OCR then mapping)")
     ap.add_argument("--batch_model", type=str, default="", help="Gemini model for batch mode (default: GEMINI_BATCH_MODEL or GEMINI_MODEL)")
@@ -8094,7 +8125,7 @@ def main():
         run_pipeline(
             input_root=Path(args.input_root),
             cdm_csv=Path(args.cdm_csv),
-            example_csv=Path(args.example_csv),
+            example_csv=(Path(args.example_csv) if str(args.example_csv).strip() else None),
             output_dir=Path(args.output_dir),
             use_batch_api=args.use_batch_api,
             batch_model=args.batch_model,
