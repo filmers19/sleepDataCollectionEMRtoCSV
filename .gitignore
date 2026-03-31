@@ -18,8 +18,43 @@ tmp_patient*_*/
 paper_patients/
 data/
 대용량손글씨OCR데이터/
+대용량손글씨OCR데이터
 
 *.saf
 
 example*.csv
 patient10_*
+
+# Repo cleanup: keep only core pipelines and selected root scripts tracked.
+README.md
+category_pipeline_*.md
+cpap_psg_support_plan_*.md
+compare_ocr_models.sh
+manual_official_labels_*.csv
+manual_official_labels_*.json
+manual_route_labels_*.csv
+manual_route_labels_*.json
+official_questionnaire_label*
+route_cdm_key_sets_20260320.json
+route_cdm_key_sets_20260320.md
+routing_answer.csv
+stages*.csv
+sample_*.jpg
+mq*.png
+out_real_single_map_agent_prompt*.txt
+prepare_aihub_handwriting_digits.py
+prepare_emnist_digits.py
+prepare_trocr_model.py
+requirements_*.txt
+run_108_ocr.sh
+run_qwen_digit_lora.sh
+run_qwen_digit_lora_aihub.sh
+setup_*.sh
+test.py
+tmp_compare/
+tmp_dataset*/
+tmp_psqi_official_review_sheet.csv
+tmp_route_audit_page_list.csv
+tmp_routeclean_official_page_list.csv
+train_qwen_digit_lora.py
+watch_qwen_digit_lora.sh
